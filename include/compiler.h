@@ -39,6 +39,7 @@ typedef struct Proto {
   char *name;
 
   int arity;
+  int upvalue_count;
 
   uint8_t *code;
   RawConstant *constants;

@@ -44,6 +44,8 @@ typedef struct {
 // caller must ensure array is not empty before calling this macro
 #define array_pop(array) ((array)[--((ArrayHeader *)(array) - 1)->count])
 
+#define array_peek(array) ((array)[((ArrayHeader *)(array) - 1)->count - 1])
+
 // reserve at least n capacity for the array
 #define array_reserve(array, n, al)                                            \
   _array_reserve((void **)&(array), sizeof(*(array)), n, al)

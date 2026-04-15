@@ -16,9 +16,10 @@ typedef struct {
 
 typedef struct {
   ObjectFunction *function;
+  ObjectUpvalue **upvalues; // for closures
+
   uint8_t *ip;
-  Value *base; // [callee, arg1, arg2, ...]
-  //               ^ base
+  Value *base;
 } CallFrame;
 
 typedef struct VirtualMachine {
@@ -27,8 +28,10 @@ typedef struct VirtualMachine {
   int frame_count;
 
   HashTable strings; // interned strings
-  HashTable globals;
-  Object *objects; // link-list of all allocated objects
+  HashTable globals; // global variables
+  Object *objects;   // link-list of all allocated objects
+
+  ObjectUpvalue *open_upvalues; // link-list of open upvalues
 
   // for native functions to return type names
   ObjectString *type_nil;

@@ -4,16 +4,17 @@
 
 #include "chunk.h"
 #include "dynamic_array.h"
+#include "object.h"
 #include "opcode.h"
 
 static int simple_instruction(const char *name, int offset) {
-  printf("%s\n", name);
+  printf("%-16s\n", name);
   return offset + 1;
 }
 
 static int constant_instruction(const char *name, Chunk *chunk, int offset) {
   uint8_t constant_index = chunk->instructions[offset + 1];
-  printf("%s %d '", name, constant_index);
+  printf("%-16s %d '", name, constant_index);
   Value constant = chunk->constants[constant_index];
   value_print(constant);
   printf("'\n");
@@ -22,7 +23,7 @@ static int constant_instruction(const char *name, Chunk *chunk, int offset) {
 
 static int byte_instruction(const char *name, Chunk *chunk, int offset) {
   uint8_t slot = chunk->instructions[offset + 1];
-  printf("%s %d\n", name, slot);
+  printf("%-16s %d\n", name, slot);
   return offset + 2;
 }
 
@@ -30,7 +31,7 @@ static int jump_instruction(const char *name, Chunk *chunk, bool is_forward,
                             int offset) {
   uint16_t jump = (uint16_t)(chunk->instructions[offset + 1] << 8);
   jump |= chunk->instructions[offset + 2];
-  printf("%s %04d -> %04d\n", name, offset,
+  printf("%-16s %04d -> %04d\n", name, offset,
          offset + 3 + (is_forward ? jump : -jump));
   return offset + 3;
 }
@@ -97,6 +98,10 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     return byte_instruction("OP_GET_LOCAL", chunk, offset);
   case OP_SET_LOCAL:
     return byte_instruction("OP_SET_LOCAL", chunk, offset);
+  case OP_GET_UPVALUE:
+    return byte_instruction("OP_GET_UPVALUE", chunk, offset);
+  case OP_SET_UPVALUE:
+    return byte_instruction("OP_SET_UPVALUE", chunk, offset);
 
   case OP_JUMP_IF_FALSE:
     return jump_instruction("OP_JUMP_IF_FALSE", chunk, true, offset);
@@ -110,8 +115,23 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_RETURN:
     return simple_instruction("OP_RETURN", offset);
 
-    // case OP_PRINT:
-    //   return simple_instruction("OP_PRINT", offset);
+  case OP_CLOSURE: {
+    offset++;
+    uint8_t constant_index = chunk->instructions[offset++];
+    printf("%-16s %d '", "OP_CLOSURE", constant_index);
+    value_print(chunk->constants[constant_index]);
+    printf("'\n");
+
+    ObjectFunction *function = AS_FUNCTION(chunk->constants[constant_index]);
+    for (int j = 0; j < function->upvalue_count; j++) {
+      int is_local = chunk->instructions[offset++];
+      int index = chunk->instructions[offset++];
+      printf("%04d      |                   %s %d\n", offset - 2,
+             is_local ? "local" : "upvalue", index);
+    }
+
+    return offset;
+  }
 
   default:
     printf("unknown opcode %d\n", instruction);

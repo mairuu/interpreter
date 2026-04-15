@@ -46,6 +46,19 @@ static ObjectFunction *vm_new_function(VirtualMachine *vm) {
   return function;
 }
 
+static ObjectUpvalue *vm_new_upvalue(VirtualMachine *vm, Value *location) {
+  ObjectUpvalue *upvalue = object_upvalue_new(&vm->al, location);
+  vm_track_object(vm, &upvalue->object);
+  return upvalue;
+}
+
+static ObjectClosure *vm_new_closure(VirtualMachine *vm,
+                                     ObjectFunction *function) {
+  ObjectClosure *closure = object_closure_new(&vm->al, function);
+  vm_track_object(vm, &closure->object);
+  return closure;
+}
+
 static ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
   ObjectNative *native = object_native_new(&vm->al, function);
   vm_track_object(vm, &native->object);
@@ -139,6 +152,7 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
 
   chunk_load_from_proto(&function->chunk, proto, &loader, &vm->al);
   function->arity = proto->arity;
+  function->upvalue_count = proto->upvalue_count;
   if (proto->name != NULL) {
     function->name = vm_intern_string(vm, proto->name, strlen(proto->name));
   }
@@ -230,11 +244,24 @@ static bool vm_call(VirtualMachine *vm, ObjectFunction *function,
   return true;
 }
 
+static bool vm_call_closure(VirtualMachine *vm, ObjectClosure *closure,
+                            int arg_count) {
+  if (!vm_call(vm, closure->function, arg_count)) {
+    return false;
+  };
+
+  vm->frames[vm->frame_count - 1].upvalues = closure->upvalues;
+  return true;
+}
+
 static bool vm_call_value(VirtualMachine *vm, Value callee, int arg_count) {
   if (IS_OBJECT(callee)) {
     switch (AS_OBJECT(callee)->type) {
     case OBJECT_FUNCTION: {
       return vm_call(vm, AS_FUNCTION(callee), arg_count);
+    }
+    case OBJECT_CLOSURE: {
+      return vm_call_closure(vm, AS_CLOSURE(callee), arg_count);
     }
     case OBJECT_NATIVE: {
       ObjectNative *native = AS_NATIVE(callee);
@@ -362,6 +389,8 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   ht_init(&vm->strings, &vm->al);
   ht_init(&vm->globals, &vm->al);
 
+  vm->open_upvalues = NULL;
+
   vm->type_bool = vm_intern_string(vm, "bool", 4);
   vm->type_nil = vm_intern_string(vm, "nil", 3);
   vm->type_number = vm_intern_string(vm, "number", 6);
@@ -401,6 +430,47 @@ static bool vm_recover_from_panic(VirtualMachine *vm) {
   return true;
 }
 
+// create or reuse an upvalue for the given local variable
+static ObjectUpvalue *vm_capture_upvalue(VirtualMachine *vm, Value *local) {
+  ObjectUpvalue *prev_upvalue = NULL;
+  ObjectUpvalue *upvalue = vm->open_upvalues;
+
+  while (upvalue != NULL && upvalue->location > local) {
+    prev_upvalue = upvalue;
+    upvalue = upvalue->next;
+  }
+
+  if (upvalue != NULL && upvalue->location == local) {
+    return upvalue;
+  }
+
+  ObjectUpvalue *new_upvalue = vm_new_upvalue(vm, local);
+  new_upvalue->next = upvalue;
+
+  if (prev_upvalue == NULL) {
+    vm->open_upvalues = new_upvalue;
+  } else {
+    prev_upvalue->next = new_upvalue;
+  }
+
+  return new_upvalue;
+}
+
+static void vm_close_upvalues(VirtualMachine *vm, Value *last) {
+  // close all open upvalues that capture a local variable at or above `last`.
+  while (vm->open_upvalues != NULL && vm->open_upvalues->location >= last) {
+    ObjectUpvalue *upvalue = vm->open_upvalues;
+    upvalue->closed =
+        *upvalue->location; // current location is on the stack, so copy the
+                            // value to the upvalue object.
+    upvalue->location =
+        &upvalue->closed; // point the upvalue to the closed value. for any
+                          // future access to this upvalue, it will read from
+                          // the closed value instead of the stack.
+    vm->open_upvalues = upvalue->next;
+  }
+}
+
 static bool vm_run(VirtualMachine *vm) {
   CallFrame *frame = &vm->frames[vm->frame_count - 1];
   uint8_t *ip = frame->ip;
@@ -426,6 +496,15 @@ static bool vm_run(VirtualMachine *vm) {
     for (Value *slot = vm->stack.values; slot < vm->stack.top; slot++) {
       printf("[ ");
       value_print(*slot);
+      // indicate the current frame with a '*'
+      if (IS_OBJECT(*slot)) {
+        bool is_current_frame =
+            (slot->as.object->type == OBJECT_FUNCTION &&
+             AS_FUNCTION(*slot) == (void *)frame->function) ||
+            (slot->as.object->type == OBJECT_CLOSURE &&
+             AS_CLOSURE(*slot)->function == (void *)frame->function);
+        printf("%c", is_current_frame ? '*' : ' ');
+      }
       printf(" ]");
     }
     printf("\n");
@@ -544,6 +623,16 @@ static bool vm_run(VirtualMachine *vm) {
       frame->base[slot] = vm_peek(vm, 0);
       break;
     }
+    case OP_GET_UPVALUE: {
+      uint8_t slot = READ_BYTE();
+      vm_push(vm, *frame->upvalues[slot]->location);
+      break;
+    }
+    case OP_SET_UPVALUE: {
+      uint8_t slot = READ_BYTE();
+      *frame->upvalues[slot]->location = vm_peek(vm, 0);
+      break;
+    }
 
     case OP_JUMP_IF_FALSE: {
       uint16_t offset = READ_SHORT();
@@ -575,6 +664,7 @@ static bool vm_run(VirtualMachine *vm) {
     }
     case OP_RETURN:
       Value result = vm_pop(vm);
+      vm_close_upvalues(vm, frame->base);
       vm->frame_count--;
       if (vm->frame_count == 0) {
         vm_pop(vm);
@@ -585,6 +675,27 @@ static bool vm_run(VirtualMachine *vm) {
       frame = &vm->frames[vm->frame_count - 1];
       ip = frame->ip;
       break;
+
+    case OP_CLOSURE: {
+      ObjectClosure *closure = vm_new_closure(vm, AS_FUNCTION(READ_CONSTANT()));
+      vm_push(vm, OBJECT_VALUE(closure));
+
+      int upvalue_count = closure->function->upvalue_count;
+      for (int i = 0; i < upvalue_count; i++) {
+        uint8_t is_local = READ_BYTE();
+        uint8_t index = READ_BYTE();
+        if (is_local) {
+          closure->upvalues[i] = vm_capture_upvalue(vm, frame->base + index);
+        } else {
+          closure->upvalues[i] = frame->upvalues[index];
+        }
+      }
+      break;
+    }
+    case OP_CLOSE_UPVALUE: {
+      vm_close_upvalues(vm, vm->stack.top - 1);
+      break;
+    }
 
     default:
       assert(false && "unknown opcode");
