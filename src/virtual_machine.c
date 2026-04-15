@@ -1,5 +1,7 @@
 #include "virtual_machine.h"
+
 #include "chunk.h"
+#include "compiler.h"
 #include "hash_table.h"
 #include "memory.h"
 #include "object.h"
@@ -7,44 +9,26 @@
 #include "value.h"
 
 #include <assert.h>
+#include <complex.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef DEBUG_TRACE_EXECUTION
 #include "debug.h"
-#include <stdio.h>
 #endif
 
-static void vm_reset(VirtualMachine *vm) { vm->stack.top = vm->stack.values; }
-
-void vm_init(VirtualMachine *vm, Allocator al) {
-  vm->al = al;
-  vm->objects = NULL;
-
-  chunk_init(&vm->chunk);
-  ht_init(&vm->strings, &vm->al);
-  ht_init(&vm->globals, &vm->al);
-
-  vm_reset(vm);
-}
-
-void vm_destroy(VirtualMachine *vm) {
-  vm_reset(vm);
-
-  ht_destroy(&vm->globals, &vm->al);
-  ht_destroy(&vm->strings, &vm->al);
-  chunk_destroy(&vm->chunk, &vm->al);
-
-  while (vm->objects) {
-    Object *next = vm->objects->next;
-    object_free(&vm->objects, &vm->al);
-    vm->objects = next;
-  }
+static void vm_reset(VirtualMachine *vm) {
+  vm->frame_count = 0;
+  vm->stack.top = vm->stack.values;
 }
 
 static void vm_track_object(VirtualMachine *vm, Object *object) {
-  assert(object != NULL);
+  assert(object != NULL && "cannot track NULL object");
+  assert(object->next == NULL && "object should not be tracked yet");
   object->next = vm->objects;
   vm->objects = object;
 }
@@ -54,6 +38,18 @@ static ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
   ObjectString *string = object_string_new(&vm->al, chars, length, hash);
   vm_track_object(vm, &string->object);
   return string;
+}
+
+static ObjectFunction *vm_new_function(VirtualMachine *vm) {
+  ObjectFunction *function = object_function_new(&vm->al);
+  vm_track_object(vm, &function->object);
+  return function;
+}
+
+static ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
+  ObjectNative *native = object_native_new(&vm->al, function);
+  vm_track_object(vm, &native->object);
+  return native;
 }
 
 static uint32_t hash_string(const char *str, int length) {
@@ -72,7 +68,7 @@ static char *copy_string(const char *str, int length, Allocator *al) {
   return copy;
 }
 
-static ObjectString *vm_intern_string(VirtualMachine *vm, char *chars,
+static ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
                                       int length) {
   uint32_t hash = hash_string(chars, length);
 
@@ -93,6 +89,15 @@ static ObjectString *vm_intern_string(VirtualMachine *vm, char *chars,
 
   return string;
 }
+
+static void vm_define_native(VirtualMachine *vm, const char *name,
+                             NavtiveFunc function) {
+  ObjectString *string = vm_intern_string(vm, name, strlen(name));
+  ObjectNative *native = vm_new_native(vm, function);
+  ht_put(&vm->globals, OBJECT_VALUE(string), OBJECT_VALUE(native), &vm->al);
+}
+
+static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto);
 
 static Value load_constant(ConstantLoader *loader, Allocator *al,
                            const RawConstant *raw_constant) {
@@ -115,23 +120,40 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
     }
     return OBJECT_VALUE(interned);
   }
+  case RAW_FUNC: {
+    Proto *proto = raw_constant->as.proto;
+    ObjectFunction *function = vm_load_proto(loader->ctx, proto);
+    return OBJECT_VALUE(function);
+  }
   }
 
   return NIL_VALUE;
 }
 
-static void vm_load_proto(VirtualMachine *vm, const Proto *proto) {
-  vm_reset(vm);
-
+static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
+  ObjectFunction *function = vm_new_function(vm);
   ConstantLoader loader = {
       .load_constant = load_constant,
       .ctx = vm,
   };
-  chunk_load_from_proto(&vm->chunk, proto, &loader, &vm->al);
+
+  chunk_load_from_proto(&function->chunk, proto, &loader, &vm->al);
+  function->arity = proto->arity;
+  if (proto->name != NULL) {
+    function->name = vm_intern_string(vm, proto->name, strlen(proto->name));
+  }
 
 #ifdef DEBUG_TRACE_EXECUTION
-  disassemble_chunk(&vm->chunk, proto->name);
+  const char *function_name = function->name ? function->name->chars
+                              : proto->type == PROTO_SCRIPT ? "<script>"
+                                                            : "<anonymous>";
+  disassemble_chunk(&function->chunk, function_name);
 #endif
+
+  proto_destroy(proto, &vm->al);
+  al_free_for(&vm->al, proto);
+
+  return function;
 }
 
 static inline void vm_push(VirtualMachine *vm, Value value) {
@@ -150,12 +172,27 @@ static inline Value vm_peek(VirtualMachine *vm, int distance) {
 }
 
 static void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
-  (void)vm;
+  // todo: raise a panic with helper
+  vm->in_panic = true;
+
   va_list args;
   va_start(args, format);
   vfprintf(stderr, format, args);
   va_end(args);
   fputs("\n", stderr);
+
+  // print a stack trace.
+  for (int i = vm->frame_count - 1; i >= 0; i--) {
+    CallFrame *frame = &vm->frames[i];
+    ObjectFunction *function = frame->function;
+    size_t instruction = frame->ip - function->chunk.instructions - 1;
+    fprintf(stderr, "[line %d] in ", function->chunk.lines[instruction]);
+    if (function->name == NULL) {
+      fprintf(stderr, "script\n");
+    } else {
+      fprintf(stderr, "%s()\n", function->name->chars);
+    }
+  }
 }
 
 static void vm_concatenate(VirtualMachine *vm) {
@@ -174,12 +211,203 @@ static void vm_concatenate(VirtualMachine *vm) {
   vm_push(vm, OBJECT_VALUE(str));
 }
 
-static bool vm_run(VirtualMachine *vm) {
+static bool vm_call(VirtualMachine *vm, ObjectFunction *function,
+                    int arg_count) {
+  if (arg_count != function->arity) {
+    vm_runtime_error(vm, "expected %d arguments but got %d", function->arity,
+                     arg_count);
+    return false;
+  }
+  if (vm->frame_count >= FRAMES_MAX) {
+    vm_runtime_error(vm, "stack overflow");
+    return false;
+  }
 
-  uint8_t *ip = vm->chunk.instructions;
+  CallFrame *frame = &vm->frames[vm->frame_count++];
+  frame->function = function;
+  frame->ip = function->chunk.instructions;
+  frame->base = vm->stack.top - arg_count - 1;
+  return true;
+}
+
+static bool vm_call_value(VirtualMachine *vm, Value callee, int arg_count) {
+  if (IS_OBJECT(callee)) {
+    switch (AS_OBJECT(callee)->type) {
+    case OBJECT_FUNCTION: {
+      return vm_call(vm, AS_FUNCTION(callee), arg_count);
+    }
+    case OBJECT_NATIVE: {
+      ObjectNative *native = AS_NATIVE(callee);
+      Value result = native->function(vm, arg_count, vm->stack.top - arg_count);
+      vm->stack.top -= arg_count + 1;
+      vm_push(vm, result);
+      return true;
+    }
+    default:
+      break; // non-callable object type
+    }
+  }
+
+  vm_runtime_error(vm, "callee is not callable");
+  return false;
+}
+
+static Value native_clock(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)vm;
+  (void)args;
+  if (arg_count != 0) {
+    vm_runtime_error(vm, "clock() takes no arguments");
+    return NIL_VALUE;
+  }
+  return NUMBER_VALUE((double)clock() / CLOCKS_PER_SEC);
+}
+
+static Value native_print(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)vm;
+  for (int i = 0; i < arg_count; i++) {
+    value_print(args[i]);
+    if (i < arg_count - 1) {
+      printf(" ");
+    }
+  }
+  return NIL_VALUE;
+}
+
+static Value native_println(VirtualMachine *vm, int arg_count, Value *args) {
+  native_print(vm, arg_count, args);
+  printf("\n");
+  return NIL_VALUE;
+}
+
+static Value native_type(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)vm;
+  if (arg_count != 1) {
+    vm_runtime_error(vm, "type() takes exactly one argument");
+    return NIL_VALUE;
+  }
+
+  switch (args[0].type) {
+  case VALUE_NIL:
+    return OBJECT_VALUE(vm->type_nil);
+  case VALUE_BOOL:
+    return OBJECT_VALUE(vm->type_bool);
+  case VALUE_NUMBER:
+    return OBJECT_VALUE(vm->type_number);
+  case VALUE_OBJECT:
+    return OBJECT_VALUE(vm->type_object);
+  case VALUE_EMPTY:
+    return OBJECT_VALUE(vm->type_empty);
+    break;
+  }
+
+  return NIL_VALUE;
+}
+
+static Value native_number(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)vm;
+  if (arg_count != 1) {
+    vm_runtime_error(vm, "number() takes exactly one argument");
+    return NIL_VALUE;
+  }
+
+  Value arg = args[0];
+  switch (arg.type) {
+  case VALUE_BOOL:
+    return NUMBER_VALUE(arg.as.boolean ? 1 : 0);
+  case VALUE_NUMBER:
+    return arg;
+  case VALUE_NIL:
+    return NIL_VALUE;
+  case VALUE_OBJECT:
+    if (IS_STRING(arg)) {
+      char *endptr;
+      double num = strtod(AS_STRING(arg)->chars, &endptr);
+      if (*endptr == '\0') {
+        return NUMBER_VALUE(num);
+      }
+    }
+    break;
+  case VALUE_EMPTY:
+    return NIL_VALUE;
+  }
+
+  return NIL_VALUE;
+}
+
+static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)vm;
+  (void)arg_count;
+  (void)args;
+
+  char buf[1024];
+
+  if (fgets(buf, sizeof(buf), stdin) == NULL) {
+    return NIL_VALUE;
+  }
+
+  int length = strlen(buf);
+  buf[length - 1] = '\0';
+  length--;
+  char *copy = copy_string(buf, length, &vm->al);
+  ObjectString *string =
+      vm_new_string(vm, copy, length, hash_string(copy, length));
+  return OBJECT_VALUE(string);
+}
+
+void vm_init(VirtualMachine *vm, Allocator al) {
+  vm->in_panic = false;
+  vm->al = al;
+  vm->objects = NULL;
+
+  ht_init(&vm->strings, &vm->al);
+  ht_init(&vm->globals, &vm->al);
+
+  vm->type_bool = vm_intern_string(vm, "bool", 4);
+  vm->type_nil = vm_intern_string(vm, "nil", 3);
+  vm->type_number = vm_intern_string(vm, "number", 6);
+  vm->type_object = vm_intern_string(vm, "object", 6);
+  vm->type_empty = vm_intern_string(vm, "empty", 5);
+
+  vm_define_native(vm, "clock", native_clock);
+  vm_define_native(vm, "print", native_print);
+  vm_define_native(vm, "println", native_println);
+  vm_define_native(vm, "type", native_type);
+  vm_define_native(vm, "number", native_number);
+  vm_define_native(vm, "readline", native_readline);
+
+  vm_reset(vm);
+}
+
+void vm_destroy(VirtualMachine *vm) {
+  vm_reset(vm);
+
+  ht_destroy(&vm->globals, &vm->al);
+  ht_destroy(&vm->strings, &vm->al);
+
+  while (vm->objects) {
+    Object *next = vm->objects->next;
+    object_free(&vm->objects, &vm->al);
+    vm->objects = next;
+  }
+}
+
+// recover from panic if needed, return true if recovered, false otherwise
+static bool vm_recover_from_panic(VirtualMachine *vm) {
+  if (!vm->in_panic) {
+    return false;
+  }
+  vm->in_panic = false;
+  vm_reset(vm);
+  return true;
+}
+
+static bool vm_run(VirtualMachine *vm) {
+  CallFrame *frame = &vm->frames[vm->frame_count - 1];
+  uint8_t *ip = frame->ip;
+
 #define READ_BYTE() (*ip++)
 #define READ_SHORT() (ip += 2, (uint16_t)(ip[-2] << 8 | ip[-1]))
-#define READ_CONSTANT() (vm->chunk.constants[READ_BYTE()])
+#define READ_CONSTANT() (frame->function->chunk.constants[READ_BYTE()])
 #define READ_STRING() (AS_STRING(READ_CONSTANT()))
 #define BINARY_OP(val_type, op)                                                \
   do {                                                                         \
@@ -202,9 +430,13 @@ static bool vm_run(VirtualMachine *vm) {
     }
     printf("\n");
 
-    disassemble_chunk_instruction(&vm->chunk,
-                                  (size_t)(ip - vm->chunk.instructions));
+    disassemble_chunk_instruction(
+        &frame->function->chunk,
+        (size_t)(ip - frame->function->chunk.instructions));
 #endif
+    if (vm_recover_from_panic(vm)) {
+      return false;
+    }
 
     uint8_t instruction = READ_BYTE();
 
@@ -240,9 +472,9 @@ static bool vm_run(VirtualMachine *vm) {
     case OP_NEGATE:
       if (!IS_NUMBER(vm_peek(vm, 0))) {
         vm_runtime_error(vm, "expected number");
-        return false;
+      } else {
+        vm->stack.top[-1].as.number *= -1;
       }
-      vm->stack.top[-1].as.number *= -1;
       break;
 
     case OP_EQUAL: {
@@ -286,10 +518,10 @@ static bool vm_run(VirtualMachine *vm) {
       ObjectString *name = READ_STRING();
       if (!ht_get(&vm->globals, OBJECT_VALUE(name))) {
         vm_runtime_error(vm, "undefined variable '%s'", name->chars);
-        return false;
+      } else {
+        Value value = vm_peek(vm, 0);
+        ht_put(&vm->globals, OBJECT_VALUE(name), value, &vm->al);
       }
-      Value value = vm_peek(vm, 0);
-      ht_put(&vm->globals, OBJECT_VALUE(name), value, &vm->al);
       break;
     }
     case OP_GET_GLOBAL: {
@@ -297,19 +529,19 @@ static bool vm_run(VirtualMachine *vm) {
       Value *value = ht_get(&vm->globals, OBJECT_VALUE(name));
       if (value == NULL) {
         vm_runtime_error(vm, "undefined variable '%s'", name->chars);
-        return false;
+      } else {
+        vm_push(vm, *value);
       }
-      vm_push(vm, *value);
       break;
     }
     case OP_GET_LOCAL: {
       uint8_t slot = READ_BYTE();
-      vm_push(vm, vm->stack.values[slot]);
+      vm_push(vm, frame->base[slot]);
       break;
     }
     case OP_SET_LOCAL: {
       uint8_t slot = READ_BYTE();
-      vm->stack.values[slot] = vm_peek(vm, 0);
+      frame->base[slot] = vm_peek(vm, 0);
       break;
     }
 
@@ -320,7 +552,6 @@ static bool vm_run(VirtualMachine *vm) {
       }
       break;
     }
-
     case OP_JUMP: {
       uint16_t offset = READ_SHORT();
       ip += offset;
@@ -332,17 +563,32 @@ static bool vm_run(VirtualMachine *vm) {
       break;
     }
 
-    case OP_PRINT:
-      value_print(vm_pop(vm));
-      printf("\n");
+    case OP_CALL: {
+      uint8_t arg_count = READ_BYTE();
+      frame->ip = ip;
+      Value callee = vm_peek(vm, arg_count);
+      if (vm_call_value(vm, callee, arg_count)) {
+        frame = &vm->frames[vm->frame_count - 1];
+        ip = frame->ip;
+      }
       break;
+    }
     case OP_RETURN:
-      return true;
+      Value result = vm_pop(vm);
+      vm->frame_count--;
+      if (vm->frame_count == 0) {
+        vm_pop(vm);
+        return true;
+      }
+      vm->stack.top = frame->base;
+      vm_push(vm, result);
+      frame = &vm->frames[vm->frame_count - 1];
+      ip = frame->ip;
+      break;
 
     default:
       assert(false && "unknown opcode");
       vm_runtime_error(vm, "unknown opcode %d", instruction);
-      return false;
     }
   }
 
@@ -364,16 +610,17 @@ InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
     goto _exit;
   }
 
-  vm_load_proto(vm, proto);
-  proto_destroy(proto, &vm->al);
-  al_free_for(&vm->al, proto);
+  vm_reset(vm);
+
+  // setup call frame for the top-level script
+  ObjectFunction *function = vm_load_proto(vm, proto);
+  vm_push(vm, OBJECT_VALUE(function));
+  vm_call(vm, function, 0);
 
   if (!vm_run(vm)) {
     result = INTERPRET_RUNTIME_ERROR;
   };
 
-  // temp
-  chunk_destroy(&vm->chunk, &vm->al);
 _exit:
   return result;
 }

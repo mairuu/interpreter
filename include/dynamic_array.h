@@ -4,7 +4,7 @@
 #include <assert.h>
 #include <stddef.h>
 
-#define ARRAY_INITIAL_CAPACITY 64
+#define ARRAY_INITIAL_CAPACITY 4
 #define ARRAY_GROWTH_FACTOR 2
 
 typedef struct {

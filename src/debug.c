@@ -105,10 +105,13 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_LOOP:
     return jump_instruction("OP_LOOP", chunk, false, offset);
 
-  case OP_PRINT:
-    return simple_instruction("OP_PRINT", offset);
+  case OP_CALL:
+    return byte_instruction("OP_CALL", chunk, offset);
   case OP_RETURN:
     return simple_instruction("OP_RETURN", offset);
+
+    // case OP_PRINT:
+    //   return simple_instruction("OP_PRINT", offset);
 
   default:
     printf("unknown opcode %d\n", instruction);

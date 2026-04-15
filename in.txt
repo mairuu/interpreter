@@ -1,7 +1,46 @@
-{
-    var n = 1
-    for var i = 1; i < 5; i = i + 1 {
-        n = n * i
+fun recursive_impl(n) {
+    if n <= 1 {
+        return 1
     }
-    print n
+    return n + recursive_impl(n - 1)
+}
+
+fun partial_impl(n) {
+    return (n + 1) * n / 2
+}
+
+var sum_fun
+
+println("choose implementation")
+println(" - recursive\n - partial")
+
+for {
+    print("> ")
+    var opt = readline()
+
+    if type(opt) == "nil" {
+        break
+    }
+
+    if opt == "recursive" {
+        sum_fun = recursive_impl
+        break
+    } else if opt == "partial" {
+        sum_fun = partial_impl
+        break
+    } else {
+        println("unknown implementation", opt)
+    }
+}
+
+for {
+    print("> ")
+    var num = number(readline())
+
+    if type(num) == "number" {
+        println("sum: ", sum_fun(num))
+    } else {
+        println("what was that?")
+        break
+    }
 }

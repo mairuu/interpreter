@@ -1,10 +1,12 @@
 #pragma once
 
-#include "compiler.h"
 #include "memory.h"
 #include "value.h"
 
-typedef struct {
+typedef struct Proto Proto;
+typedef struct RawConstant RawConstant;
+
+typedef struct Chunk {
   uint8_t *instructions;
   Value *constants;
   int *lines;

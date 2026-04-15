@@ -2,6 +2,7 @@
 #include "value.h"
 
 #include <assert.h>
+#include <chunk.h>
 #include <stdio.h>
 
 void object_print(Object *obj) {
@@ -9,12 +10,23 @@ void object_print(Object *obj) {
   case OBJECT_STRING:
     printf("%s", ((ObjectString *)obj)->chars);
     break;
+  case OBJECT_FUNCTION:
+    if (((ObjectFunction *)obj)->name) {
+      printf("<fn %s>", ((ObjectFunction *)obj)->name->chars);
+    } else {
+      printf("<script>");
+    }
+    break;
+  case OBJECT_NATIVE:
+    printf("<native fn>");
+    break;
   }
 }
 
 static void *object_new(Allocator *al, size_t size, ObjectType type) {
   Object *obj = al_alloc(al, size);
   obj->type = type;
+  obj->next = NULL;
   return obj;
 }
 
@@ -48,10 +60,44 @@ void object_string_free(ObjectString **obj, Allocator *al) {
   *obj = NULL;
 }
 
+ObjectFunction *object_function_new(Allocator *al) {
+  ObjectFunction *object = OBJECT_NEW(al, ObjectFunction, OBJECT_FUNCTION);
+  object->arity = 0;
+  object->name = NULL;
+  chunk_init(&object->chunk);
+  return object;
+}
+
+void object_function_free(ObjectFunction **obj, Allocator *al) {
+  if (*obj) {
+    chunk_destroy(&(*obj)->chunk, al);
+    al_free(al, *obj, sizeof(ObjectFunction));
+    *obj = NULL;
+  }
+}
+
+ObjectNative *object_native_new(Allocator *al, NavtiveFunc function) {
+  ObjectNative *object = OBJECT_NEW(al, ObjectNative, OBJECT_NATIVE);
+  object->function = function;
+  return object;
+}
+void object_native_free(ObjectNative **obj, Allocator *al) {
+  if (*obj) {
+    al_free(al, *obj, sizeof(ObjectNative));
+    *obj = NULL;
+  }
+}
+
 void object_free(Object **obj, Allocator *al) {
   switch ((*obj)->type) {
   case OBJECT_STRING:
     object_string_free((ObjectString **)obj, al);
+    break;
+  case OBJECT_FUNCTION:
+    object_function_free((ObjectFunction **)obj, al);
+    break;
+  case OBJECT_NATIVE:
+    object_native_free((ObjectNative **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

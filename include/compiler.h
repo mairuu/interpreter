@@ -3,11 +3,11 @@
 #include "memory.h"
 #include <stdint.h>
 
-typedef enum { RAW_NIL, RAW_BOOL, RAW_NUMBER, RAW_STRING } RawType;
+typedef enum { RAW_NIL, RAW_BOOL, RAW_NUMBER, RAW_STRING, RAW_FUNC } RawType;
 
-// typedef struct Proto Proto;
+typedef struct Proto Proto;
 
-typedef struct {
+typedef struct RawConstant {
   RawType type;
   union {
     bool boolean;
@@ -17,7 +17,7 @@ typedef struct {
       int length;
       int capacity;
     } string;
-    // Proto *proto;
+    Proto *proto;
   } as;
 } RawConstant;
 
@@ -28,6 +28,7 @@ typedef struct {
 #define RAW_STRING_VALUE(s, l, c)                                              \
   ((RawConstant){.type = RAW_STRING,                                           \
                  .as.string = {.chars = (s), .length = (l), .capacity = (c)}})
+#define RAW_FUNC_VALUE(p) ((RawConstant){.type = RAW_FUNC, .as.proto = (p)})
 
 // type of function prototypes.
 typedef enum { PROTO_SCRIPT, PROTO_FUNCTION } ProtoType;
@@ -36,6 +37,8 @@ typedef enum { PROTO_SCRIPT, PROTO_FUNCTION } ProtoType;
 typedef struct Proto {
   ProtoType type;
   char *name;
+
+  int arity;
 
   uint8_t *code;
   RawConstant *constants;

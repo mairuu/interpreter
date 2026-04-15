@@ -130,7 +130,7 @@ int main(int argc, char *argv[]) {
   } else if (argc == 2) {
     run_file(&vm, argv[1]);
   } else {
-    fprintf(stderr, "usage: my_interpreter [path]\n");
+    fprintf(stderr, "usage: interpreter [path]\n");
     exit(64);
   }
 

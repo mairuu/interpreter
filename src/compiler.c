@@ -20,6 +20,7 @@
 void proto_init(Proto *proto, ProtoType type, char *name, Allocator *al) {
   proto->type = type;
   proto->name = name;
+  proto->arity = 0;
   proto->code = array_new(al, uint8_t);
   proto->constants = array_new(al, RawConstant);
   proto->lines = array_new(al, int);
@@ -92,12 +93,16 @@ typedef struct Compiler {
   Proto *proto;
 } Compiler;
 
-void compiler_init(Compiler *compiler, ProtoType type, Allocator *al) {
+static void compiler_init(Compiler *compiler, Proto *proto) {
   compiler->enclosing = NULL;
   compiler->scope_depth = 0;
   compiler->local_count = 0;
+  compiler->proto = proto;
 
-  proto_init(compiler->proto, type, NULL, al);
+  Local *local = &compiler->locals[compiler->local_count++];
+  local->depth = 0;
+  local->name.start = "";
+  local->name.length = 0;
 }
 
 #define MAX_BREAK_JUMPS 32
@@ -201,16 +206,16 @@ static char *copy_escaped_string(const char *str, int length, int *out_length,
 
 static void ctx_begin_compile(CompilerContext *ctx, Compiler *compiler,
                               ProtoType type) {
-  compiler_init(compiler, type, ctx->al);
+  Proto *proto = al_alloc_for(ctx->al, Proto);
+  proto_init(proto, type, NULL, ctx->al);
+  compiler_init(compiler, proto);
 
   compiler->enclosing = ctx->current_compiler;
   ctx->current_compiler = compiler;
 
-  compiler->proto = al_alloc_for(ctx->al, Proto);
-
-  if (type != PROTO_SCRIPT) {
-    compiler->proto->name = copy_string(ctx->parser.previous.start,
-                                        ctx->parser.previous.length, ctx->al);
+  if (type != PROTO_SCRIPT && ctx->parser.previous.type == TOKEN_IDENTIFIER) {
+    proto->name = copy_string(ctx->parser.previous.start,
+                              ctx->parser.previous.length, ctx->al);
   }
 }
 
@@ -368,6 +373,7 @@ static void ctx_emit_constant(CompilerContext *ctx, RawConstant value) {
 }
 
 static void ctx_emit_return(CompilerContext *ctx) {
+  ctx_emit_byte(ctx, OP_NIL);
   ctx_emit_byte(ctx, OP_RETURN);
 }
 
@@ -395,7 +401,7 @@ static void ctx_synchronize(CompilerContext *ctx) {
     case TOKEN_VAR:
     case TOKEN_FOR:
     case TOKEN_IF:
-    case TOKEN_PRINT:
+    // case TOKEN_PRINT:
     case TOKEN_RETURN:
       return;
     default:
@@ -429,6 +435,7 @@ typedef struct {
 } ParseRule;
 
 static void grouping(CompilerContext *ctx, bool can_assign);
+static void call(CompilerContext *ctx, bool can_assign);
 static void number(CompilerContext *ctx, bool can_assign);
 static void unary(CompilerContext *ctx, bool can_assign);
 static void binary(CompilerContext *ctx, bool can_assign);
@@ -438,10 +445,12 @@ static void variable(CompilerContext *ctx, bool can_assign);
 static void and_(CompilerContext *ctx, bool can_assign);
 static void or_(CompilerContext *ctx, bool can_assign);
 
+// expression
 static void if_(CompilerContext *ctx, bool can_assign);
+static void fun(CompilerContext *ctx, bool can_assign);
 
 ParseRule rules[] = {
-    [TOKEN_LEFT_PAREN] = {grouping, NULL, PREC_NONE},
+    [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
     [TOKEN_RIGHT_PAREN] = {NULL, NULL, PREC_NONE},
     [TOKEN_LEFT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_RIGHT_BRACE] = {NULL, NULL, PREC_NONE},
@@ -476,11 +485,11 @@ ParseRule rules[] = {
     [TOKEN_ELSE] = {NULL, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
     [TOKEN_FOR] = {NULL, NULL, PREC_NONE},
-    [TOKEN_FUN] = {NULL, NULL, PREC_NONE},
+    [TOKEN_FUN] = {fun, NULL, PREC_NONE},
     [TOKEN_IF] = {if_, NULL, PREC_NONE},
     [TOKEN_NIL] = {literal, NULL, PREC_NONE},
     [TOKEN_OR] = {NULL, or_, PREC_OR},
-    [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
+    // [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
     [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
     [TOKEN_THIS] = {NULL, NULL, PREC_NONE},
@@ -491,7 +500,7 @@ ParseRule rules[] = {
     [TOKEN_EOF] = {NULL, NULL, PREC_NONE},
 };
 
-const ParseRule *get_rule(TokenType type) { return &rules[type]; }
+static const ParseRule *get_rule(TokenType type) { return &rules[type]; }
 
 static void parse_precedence(CompilerContext *ctx, Precedence precedence) {
   ctx_advance(ctx);
@@ -511,7 +520,7 @@ static void parse_precedence(CompilerContext *ctx, Precedence precedence) {
   }
 
   if (can_assign && ctx_match(ctx, TOKEN_EQUAL)) {
-    ctx_error_at(ctx, &ctx->parser.current, "invalid assignment target.");
+    ctx_error_at(ctx, &ctx->parser.previous, "invalid assignment target.");
   }
 }
 
@@ -522,7 +531,7 @@ static void expression(CompilerContext *ctx) {
 static bool identifier_equals(Token *a, Token *b);
 static uint8_t ctx_identifier_constant(CompilerContext *ctx, Token *name);
 
-int ctx_resolve_local(CompilerContext *ctx, Token *name) {
+static int ctx_resolve_local(CompilerContext *ctx, Token *name) {
   for (int i = ctx->current_compiler->local_count - 1; i >= 0; i--) {
     Local *local = &ctx->current_compiler->locals[i];
     if (!identifier_equals(name, &local->name)) {
@@ -553,7 +562,8 @@ static VarRef ctx_resolve_variable(CompilerContext *ctx, Token name) {
   return ref;
 }
 
-void ctx_named_variable(CompilerContext *ctx, Token name, bool can_assign) {
+static void ctx_named_variable(CompilerContext *ctx, Token name,
+                               bool can_assign) {
   VarRef ref = ctx_resolve_variable(ctx, name);
 
   if (can_assign && ctx_match(ctx, TOKEN_EQUAL)) {
@@ -664,10 +674,10 @@ static void statement_expression(CompilerContext *ctx) {
   ctx_emit_byte(ctx, OP_POP);
 }
 
-static void statement_print(CompilerContext *ctx) {
-  expression(ctx);
-  ctx_emit_byte(ctx, OP_PRINT);
-}
+// static void statement_print(CompilerContext *ctx) {
+//   expression(ctx);
+//   ctx_emit_byte(ctx, OP_PRINT);
+// }
 
 static void declaration(CompilerContext *ctx);
 
@@ -935,10 +945,26 @@ static void statement_label(CompilerContext *ctx) {
   }
 }
 
+static void statement_return(CompilerContext *ctx) {
+  if (ctx->current_compiler->proto->type == PROTO_SCRIPT) {
+    ctx_error_at(ctx, &ctx->parser.previous,
+                 "can't return from top-level code.");
+  }
+
+  if (ctx_check(ctx, TOKEN_RIGHT_BRACE)) {
+    ctx_emit_return(ctx);
+  } else {
+    expression(ctx);
+    ctx_emit_byte(ctx, OP_RETURN);
+  }
+}
+
 static void statement(CompilerContext *ctx) {
-  if (ctx_match(ctx, TOKEN_PRINT)) {
-    statement_print(ctx);
-  } else if (ctx_match(ctx, TOKEN_IF)) {
+  // if (ctx_match(ctx, TOKEN_PRINT)) {
+  //   statement_print(ctx);
+  // }
+
+  if (ctx_match(ctx, TOKEN_IF)) {
     statement_if(ctx);
   } else if (ctx_match(ctx, TOKEN_FOR)) {
     statement_for(ctx, NULL);
@@ -953,6 +979,8 @@ static void statement(CompilerContext *ctx) {
   } else if (ctx_check(ctx, TOKEN_IDENTIFIER) &&
              ctx_check_next(ctx, TOKEN_COLON)) {
     statement_label(ctx);
+  } else if (ctx_match(ctx, TOKEN_RETURN)) {
+    statement_return(ctx);
   } else {
     statement_expression(ctx);
   }
@@ -964,7 +992,7 @@ static uint8_t ctx_identifier_constant(CompilerContext *ctx, Token *name) {
       ctx, RAW_STRING_VALUE(name_str, name->length, name->length));
 }
 
-bool identifier_equals(Token *a, Token *b) {
+static bool identifier_equals(Token *a, Token *b) {
   return a->length == b->length && memcmp(a->start, b->start, a->length) == 0;
 }
 
@@ -1050,44 +1078,62 @@ static void ctx_define_variable(CompilerContext *ctx, uint8_t global_index) {
 }
 
 static void declaration_var(CompilerContext *ctx) {
-  uint8_t globals[MAX_ASSIGNMENTS];
-  globals[0] = ctx_parse_variable(ctx, "expect variable name");
-  int assignments = 1;
-
-  while (ctx_match(ctx, TOKEN_COMMA)) {
-    if (assignments >= MAX_ASSIGNMENTS) {
-      ctx_error_at(ctx, &ctx->parser.previous,
-                   "too many variables in multiple assignment.");
-      break;
-    }
-    globals[assignments++] = ctx_parse_variable(ctx, "expect variable name");
-  }
+  uint8_t index = ctx_parse_variable(ctx, "expect variable name");
 
   if (ctx_match(ctx, TOKEN_EQUAL)) {
-    for (int i = 0; i < assignments; i++) {
-      bool ok = true;
-      if (i > 0) {
-        ok = ctx_consume(ctx, TOKEN_COMMA, "expect ',' between initializers");
-      }
-      if (ok) {
-        expression(ctx);
-      }
-    }
+    expression(ctx);
   } else {
-    for (int i = 0; i < assignments; i++) {
-      ctx_emit_byte(ctx, OP_NIL);
-    }
+    ctx_emit_byte(ctx, OP_NIL);
   }
 
-  for (int i = 0; i < assignments; i++) {
-    uint8_t index = globals[i];
-    ctx_define_variable(ctx, index);
+  ctx_define_variable(ctx, index);
+}
+
+// parse arguments and body of a function
+static uint8_t ctx_compile_function(CompilerContext *ctx, ProtoType type,
+                                    bool is_anonymous) {
+  Compiler compiler;
+  ctx_begin_compile(ctx, &compiler, type);
+
+  ctx_begin_scope(ctx);
+
+  ctx_consume(ctx, TOKEN_LEFT_PAREN,
+              is_anonymous ? "expect '(' after function declaration"
+                           : "expect '(' after function name");
+  if (!ctx_check(ctx, TOKEN_RIGHT_PAREN)) {
+    do {
+      ctx->current_compiler->proto->arity++;
+      if (ctx->current_compiler->proto->arity >= UINT8_COUNT) {
+        ctx_error_at(ctx, &ctx->parser.previous,
+                     "can't have more than 255 parameters.");
+      }
+      uint8_t param_index = ctx_parse_variable(ctx, "expect parameter name");
+      ctx_define_variable(ctx, param_index);
+    } while (ctx_match(ctx, TOKEN_COMMA));
   }
+  ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after function parameters.");
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before function body.");
+  statement_block(ctx);
+
+  Proto *proto = ctx_end_compile(ctx);
+  uint8_t function_constant = ctx_make_constant(ctx, RAW_FUNC_VALUE(proto));
+  ctx_emit_bytes(ctx, OP_CONSTANT, function_constant);
+  return function_constant;
+}
+
+static void declaration_fun(CompilerContext *ctx) {
+  uint8_t global = ctx_parse_variable(ctx, "expect function name.");
+  ctx_mark_initialized(ctx);
+  ctx_compile_function(ctx, PROTO_FUNCTION, false);
+  ctx_define_variable(ctx, global);
 }
 
 static void declaration(CompilerContext *ctx) {
   if (ctx_match(ctx, TOKEN_VAR)) {
     declaration_var(ctx);
+  } else if (ctx_match(ctx, TOKEN_FUN)) {
+    declaration_fun(ctx);
   } else {
     statement(ctx);
   }
@@ -1101,6 +1147,25 @@ static void grouping(CompilerContext *ctx, bool can_assign) {
   (void)can_assign;
   expression(ctx);
   ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after expression.");
+}
+
+static void call(CompilerContext *ctx, bool can_assign) {
+  (void)can_assign;
+
+  int arg_count = 0;
+  if (!ctx_check(ctx, TOKEN_RIGHT_PAREN)) {
+    do {
+      expression(ctx);
+      if (arg_count >= UINT8_COUNT) {
+        ctx_error_at(ctx, &ctx->parser.current,
+                     "can't have more than 255 arguments.");
+      }
+      arg_count++;
+    } while (ctx_match(ctx, TOKEN_COMMA));
+  }
+  ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after arguments.");
+
+  ctx_emit_bytes(ctx, OP_CALL, (uint8_t)arg_count);
 }
 
 void number(CompilerContext *ctx, bool can_assign) {
@@ -1130,7 +1195,7 @@ void unary(CompilerContext *ctx, bool can_assign) {
   }
 }
 
-void binary(CompilerContext *ctx, bool can_assign) {
+static void binary(CompilerContext *ctx, bool can_assign) {
   (void)can_assign;
 
   TokenType operator_type = ctx->parser.previous.type;
@@ -1178,7 +1243,7 @@ void binary(CompilerContext *ctx, bool can_assign) {
   }
 }
 
-void literal(CompilerContext *ctx, bool can_assign) {
+static void literal(CompilerContext *ctx, bool can_assign) {
   (void)can_assign;
 
   switch (ctx->parser.previous.type) {
@@ -1211,11 +1276,11 @@ void string(CompilerContext *ctx, bool can_assign) {
   ctx_emit_constant(ctx, RAW_STRING_VALUE(chars, length, capacity));
 }
 
-void variable(CompilerContext *ctx, bool can_assign) {
+static void variable(CompilerContext *ctx, bool can_assign) {
   ctx_named_variable(ctx, ctx->parser.previous, can_assign);
 }
 
-void and_(CompilerContext *ctx, bool can_assign) {
+static void and_(CompilerContext *ctx, bool can_assign) {
   (void)can_assign;
 
   int end_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
@@ -1226,7 +1291,7 @@ void and_(CompilerContext *ctx, bool can_assign) {
   ctx_patch_jump(ctx, end_jump);
 }
 
-void or_(CompilerContext *ctx, bool can_assign) {
+static void or_(CompilerContext *ctx, bool can_assign) {
   (void)can_assign;
 
   int else_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
@@ -1239,7 +1304,7 @@ void or_(CompilerContext *ctx, bool can_assign) {
   ctx_patch_jump(ctx, end_jump);
 }
 
-void if_(CompilerContext *ctx, bool can_assign) {
+static void if_(CompilerContext *ctx, bool can_assign) {
   (void)can_assign;
   expression(ctx);
 
@@ -1269,6 +1334,12 @@ void if_(CompilerContext *ctx, bool can_assign) {
   ctx_patch_jump(ctx, exit_jump);
 }
 
+static void fun(CompilerContext *ctx, bool can_assign) {
+  (void)ctx;
+  (void)can_assign;
+  assert(false && "function declaration not implemented yet");
+}
+
 Proto *compile(const char *source, Allocator *al) {
   CompilerContext ctx;
   ctx_init(&ctx, source, al);
@@ -1284,6 +1355,7 @@ Proto *compile(const char *source, Allocator *al) {
 
   Proto *proto = ctx_end_compile(&ctx);
   if (ctx.parser.had_error) {
+    al_free_for(al, proto);
     return NULL;
   }
 

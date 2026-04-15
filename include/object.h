@@ -1,11 +1,10 @@
 #pragma once
 
+#include "chunk.h"
 #include "memory.h"
 #include "value.h"
 
-typedef enum {
-  OBJECT_STRING,
-} ObjectType;
+typedef enum { OBJECT_STRING, OBJECT_FUNCTION, OBJECT_NATIVE } ObjectType;
 
 struct Object {
   Object *next;
@@ -20,6 +19,21 @@ typedef struct {
   bool is_interned;
 } ObjectString;
 
+typedef struct {
+  Object object;
+  int arity;
+  Chunk chunk;
+  ObjectString *name;
+} ObjectFunction;
+
+typedef struct VirtualMachine VirtualMachine;
+typedef Value (*NavtiveFunc)(VirtualMachine *vm, int arg_count, Value *args);
+
+typedef struct {
+  Object object;
+  NavtiveFunc function;
+} ObjectNative;
+
 void object_print(Object *obj);
 
 static inline bool value_is_object_type(Value value, ObjectType type) {
@@ -27,8 +41,12 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
 }
 
 #define IS_STRING(value) value_is_object_type(value, OBJECT_STRING)
+#define IS_FUNCTION(value) value_is_object_type(value, OBJECT_FUNCTION)
+#define IS_NATIVE(value) value_is_object_type(value, OBJECT_NATIVE)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
+#define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
+#define AS_NATIVE(value) ((ObjectNative *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void object_free(Object **obj, Allocator *al);
@@ -39,3 +57,9 @@ ObjectString object_string_create(const char *chars, int length, uint32_t hash);
 ObjectString *object_string_new(Allocator *al, char *chars, int length,
                                 uint32_t hash);
 void object_string_free(ObjectString **obj, Allocator *al);
+
+ObjectFunction *object_function_new(Allocator *al);
+void object_function_free(ObjectFunction **obj, Allocator *al);
+
+ObjectNative *object_native_new(Allocator *al, NavtiveFunc function);
+void object_native_free(ObjectNative **obj, Allocator *al);
