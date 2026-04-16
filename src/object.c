@@ -33,6 +33,7 @@ static void *object_new(Allocator *al, size_t size, ObjectType type) {
   Object *obj = al_alloc(al, size);
   obj->type = type;
   obj->next = NULL;
+  obj->is_marked = false;
   return obj;
 }
 

@@ -109,8 +109,8 @@ Value *ht_get(HashTable *table, Value key) {
 
 static void _ht_alloc(HashTable *table, int capacity, Allocator *al) {
   table->count = 0;
-  table->capacity = capacity;
   table->entries = al_alloc(al, sizeof(Entry) * capacity);
+  table->capacity = capacity;
   // fill new entries with empty values
   for (int i = 0; i < capacity; i++) {
     mark_empty(&table->entries[i]);

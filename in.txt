@@ -1,9 +1,15 @@
-var sum = fun sum(n) {
-    return if n < 1 {
-        1
-    } else {
-        sum(n-1) + n
+{
+    var sum = fun sum(n) {
+        return if n < 1 {
+            1
+        } else {
+            sum(n-1) + n
+        }
     }
+
+    println(sum(4))
 }
 
-println(sum(4))
+for var i = 0; i < 100; i = i + 1 {
+    println("Lorem ipsum dolor sit, amet consectetur adipisicing elit. Cum laudantium eveniet amet recusandae repellendus ex, consequatur reiciendis vel harum nesciunt necessitatibus" +" perspiciatis esse nulla deleniti magni architecto est! Nulla, iusto?")
+}

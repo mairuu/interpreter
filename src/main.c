@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "memory.h"
+#include "garbage_collector.h"
 #include "virtual_machine.h"
 
 static void repl(VirtualMachine *vm) {
@@ -109,7 +109,7 @@ static void _track_free(void *ctx, void *ptr, size_t size) {
   track_ctx->inner->free(track_ctx->inner, ptr, size);
 }
 
-Allocator track_allocator_create(TrackAllocatorContext *ctx) {
+static Allocator track_allocator_create(TrackAllocatorContext *ctx) {
   return (Allocator){
       .alloc = _track_alloc,
       .realloc = _track_realloc,
@@ -118,12 +118,25 @@ Allocator track_allocator_create(TrackAllocatorContext *ctx) {
   };
 }
 
-int main(int argc, char *argv[]) {
-  Allocator allocator = heap_allocator_create();
-  TrackAllocatorContext track_ctx = {.inner = &allocator, .allocated = 0};
-  Allocator track_allocator = track_allocator_create(&track_ctx);
+static void ta_init(TrackAllocatorContext *ctx, Allocator *inner) {
+  ctx->inner = inner;
+  ctx->allocated = 0;
+}
 
-  vm_init(&vm, track_allocator);
+static void ta_destory(Allocator *allocator) { (void)allocator; }
+
+int main(int argc, char *argv[]) {
+  Allocator heap_alloc = heap_allocator_create();
+
+  TrackAllocatorContext track;
+  ta_init(&track, &heap_alloc);
+  Allocator track_alloc = track_allocator_create(&track);
+
+  GarbageCollector gc;
+  gc_init(&gc, &vm, &track_alloc);
+  Allocator gc_alloc = gc_allocator_create(&gc);
+
+  vm_init(&vm, gc_alloc);
 
   if (argc == 1) {
     repl(&vm);
@@ -136,8 +149,13 @@ int main(int argc, char *argv[]) {
 
   vm_destroy(&vm);
 
-  assert(track_ctx.allocated == 0 &&
-         "memory leak detected: not all allocated memory was freed");
+  assert(gc.bytes_allocated == 0 && "memory leak detected: garbage collector "
+                                    "has allocated memory that was not freed");
+  gc_destroy(&gc);
+
+  assert(track.allocated == 0 && "memory leak detected: track allocator "
+                                 "has allocated memory that was not freed");
+  ta_destory(&track_alloc);
 
   return 0;
 }

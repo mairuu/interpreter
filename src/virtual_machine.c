@@ -17,11 +17,15 @@
 #include <string.h>
 #include <time.h>
 
-#ifdef DEBUG_TRACE_EXECUTION
+#ifdef DEBUG_PRINT_CODE
 #include "debug.h"
 #endif
 
-static void vm_reset(VirtualMachine *vm) {
+static inline void vm_push(VirtualMachine *vm, Value value);
+static inline Value vm_pop(VirtualMachine *vm);
+static inline Value vm_peek(VirtualMachine *vm, int distance);
+
+static void vm_reset_stack(VirtualMachine *vm) {
   vm->frame_count = 0;
   vm->stack.top = vm->stack.values;
 }
@@ -98,16 +102,23 @@ static ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
     return NULL;
   }
 
-  ht_put(&vm->strings, OBJECT_VALUE(string), OBJECT_VALUE(string), &vm->al);
+  Value interned_value = OBJECT_VALUE(string);
+  vm_push(vm, interned_value);
+  ht_put(&vm->strings, interned_value, interned_value, &vm->al);
+  vm_pop(vm);
 
   return string;
 }
 
 static void vm_define_native(VirtualMachine *vm, const char *name,
                              NavtiveFunc function) {
-  ObjectString *string = vm_intern_string(vm, name, strlen(name));
-  ObjectNative *native = vm_new_native(vm, function);
-  ht_put(&vm->globals, OBJECT_VALUE(string), OBJECT_VALUE(native), &vm->al);
+  Value string = OBJECT_VALUE(vm_intern_string(vm, name, strlen(name)));
+  vm_push(vm, string);
+  Value native = OBJECT_VALUE(vm_new_native(vm, function));
+  vm_push(vm, native);
+  ht_put(&vm->globals, string, native, &vm->al);
+  vm_pop(vm);
+  vm_pop(vm);
 }
 
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto);
@@ -145,6 +156,7 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
 
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
   ObjectFunction *function = vm_new_function(vm);
+  vm_push(vm, OBJECT_VALUE(function));
   ConstantLoader loader = {
       .load_constant = load_constant,
       .ctx = vm,
@@ -157,7 +169,7 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
     function->name = vm_intern_string(vm, proto->name, strlen(proto->name));
   }
 
-#ifdef DEBUG_TRACE_EXECUTION
+#ifdef DEBUG_PRINT_CODE
   const char *function_name = function->name ? function->name->chars
                               : proto->type == PROTO_SCRIPT ? "<script>"
                                                             : "<anonymous>";
@@ -166,6 +178,7 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
 
   proto_destroy(proto, &vm->al);
   al_free_for(&vm->al, proto);
+  vm_pop(vm);
 
   return function;
 }
@@ -210,8 +223,8 @@ static void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
 }
 
 static void vm_concatenate(VirtualMachine *vm) {
-  ObjectString *b = AS_STRING(vm_pop(vm));
-  ObjectString *a = AS_STRING(vm_pop(vm));
+  ObjectString *b = AS_STRING(vm_peek(vm, 0));
+  ObjectString *a = AS_STRING(vm_peek(vm, 1));
 
   int length = a->length + b->length;
   char *chars = al_alloc(&vm->al, length + 1);
@@ -222,6 +235,8 @@ static void vm_concatenate(VirtualMachine *vm) {
   uint32_t hash = hash_string(chars, length);
   ObjectString *str = vm_new_string(vm, chars, length, hash);
 
+  vm_pop(vm); // pop b
+  vm_pop(vm); // pop a
   vm_push(vm, OBJECT_VALUE(str));
 }
 
@@ -382,6 +397,8 @@ static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
 }
 
 void vm_init(VirtualMachine *vm, Allocator al) {
+  vm_reset_stack(vm);
+
   vm->in_panic = false;
   vm->al = al;
   vm->objects = NULL;
@@ -403,12 +420,10 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   vm_define_native(vm, "type", native_type);
   vm_define_native(vm, "number", native_number);
   vm_define_native(vm, "readline", native_readline);
-
-  vm_reset(vm);
 }
 
 void vm_destroy(VirtualMachine *vm) {
-  vm_reset(vm);
+  vm_reset_stack(vm);
 
   ht_destroy(&vm->globals, &vm->al);
   ht_destroy(&vm->strings, &vm->al);
@@ -426,7 +441,7 @@ static bool vm_recover_from_panic(VirtualMachine *vm) {
     return false;
   }
   vm->in_panic = false;
-  vm_reset(vm);
+  vm_reset_stack(vm);
   return true;
 }
 
@@ -712,7 +727,7 @@ InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
     goto _exit;
   }
 
-  vm_reset(vm);
+  vm_reset_stack(vm);
 
   // setup call frame for the top-level script
   ObjectFunction *function = vm_load_proto(vm, proto);

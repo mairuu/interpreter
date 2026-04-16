@@ -1,11 +1,17 @@
-TARGET   := interpreter 
-CC       := cc
-CSTD     := -std=c23
-DEFS     := -DDEBUG_TRACE_EXECUTION
-CFLAGS   := $(CSTD) -Wall -Wextra -Wpedantic $(DEFS)
-IFLAGS   := -Iinclude
-LDFLAGS  :=
-LIBS     :=
+
+DEFS :=
+# DEFS += -DDEBUG_TRACE_EXECUTION
+DEFS += -DDEBUG_PRINT_CODE
+DEFS += -DDEBUG_LOG_GC
+# DEFS += -DDEBUG_STRESS_GC
+
+TARGET  := interpreter 
+CC      := cc
+CSTD    := -std=c23
+CFLAGS  := $(CSTD) -Wall -Wextra -Wpedantic $(DEFS)
+IFLAGS  := -Iinclude
+LDFLAGS :=
+LIBS    :=
 
 # build type: make build=release  (default: debug)
 BUILD    ?= debug
