@@ -496,16 +496,7 @@ static bool vm_run(VirtualMachine *vm) {
     for (Value *slot = vm->stack.values; slot < vm->stack.top; slot++) {
       printf("[ ");
       value_print(*slot);
-      // indicate the current frame with a '*'
-      if (IS_OBJECT(*slot)) {
-        bool is_current_frame =
-            (slot->as.object->type == OBJECT_FUNCTION &&
-             AS_FUNCTION(*slot) == (void *)frame->function) ||
-            (slot->as.object->type == OBJECT_CLOSURE &&
-             AS_CLOSURE(*slot)->function == (void *)frame->function);
-        printf("%c", is_current_frame ? '*' : ' ');
-      }
-      printf(" ]");
+      printf(" %c", frame->base == slot ? '=' : ']');
     }
     printf("\n");
 

@@ -1,11 +1,9 @@
-fun make_counter() {
-    var count = 0
-    fun increment() {
-        return count = count + 1
+var sum = fun sum(n) {
+    return if n < 1 {
+        1
+    } else {
+        sum(n-1) + n
     }
-    return increment
 }
 
-var counter = make_counter()
-
-println(counter())
+println(sum(4))

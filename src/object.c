@@ -6,11 +6,7 @@
 #include <stdio.h>
 
 static void object_function_print(ObjectFunction *function) {
-  if (function->name) {
-    printf("<fn %s>", function->name->chars);
-  } else {
-    printf("<script>");
-  }
+  printf("<fn %s>", function->name ? function->name->chars : "_");
 }
 
 void object_print(Object *obj) {

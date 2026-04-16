@@ -151,7 +151,7 @@ static void ctx_init(CompilerContext *ctx, const char *source, Allocator *al) {
 // static Checkpoint ctx_checkpoint(CompilerContext *ctx) {
 //   return (Checkpoint){.parser = ctx->parser,
 //                       .constants_count =
-//                           array_count(ctx->current_compiler->proto.constants)};
+//                           array_count(ctx->current_compiler->proto->constants)};
 // }
 
 // static void ctx_restore(CompilerContext *ctx, Checkpoint cp) {
@@ -1156,15 +1156,19 @@ static void declaration_var(CompilerContext *ctx) {
 
 // parse arguments and body of a function
 static uint8_t ctx_compile_function(CompilerContext *ctx, ProtoType type,
-                                    bool is_anonymous) {
+                                    Token *name) {
   Compiler compiler;
   ctx_begin_compile(ctx, &compiler, type);
+
+  if (name != NULL) {
+    compiler.locals[0].name = *name;
+  }
 
   ctx_begin_scope(ctx);
 
   ctx_consume(ctx, TOKEN_LEFT_PAREN,
-              is_anonymous ? "expect '(' after function declaration"
-                           : "expect '(' after function name");
+              name ? "expect '(' after function name"
+                   : "expect '(' after function declaration");
   if (!ctx_check(ctx, TOKEN_RIGHT_PAREN)) {
     do {
       ctx->current_compiler->proto->arity++;
@@ -1201,7 +1205,7 @@ static uint8_t ctx_compile_function(CompilerContext *ctx, ProtoType type,
 static void declaration_fun(CompilerContext *ctx) {
   uint8_t global = ctx_parse_variable(ctx, "expect function name.");
   ctx_mark_initialized(ctx);
-  ctx_compile_function(ctx, PROTO_FUNCTION, false);
+  ctx_compile_function(ctx, PROTO_FUNCTION, NULL);
   ctx_define_variable(ctx, global);
 }
 
@@ -1411,9 +1415,17 @@ static void if_(CompilerContext *ctx, bool can_assign) {
 }
 
 static void fun(CompilerContext *ctx, bool can_assign) {
-  (void)ctx;
   (void)can_assign;
-  assert(false && "function declaration not implemented yet");
+
+  Token name;
+  bool is_named = false;
+
+  if (ctx_match(ctx, TOKEN_IDENTIFIER)) {
+    name = ctx->parser.previous;
+    is_named = true;
+  }
+
+  ctx_compile_function(ctx, PROTO_FUNCTION, is_named ? &name : NULL);
 }
 
 Proto *compile(const char *source, Allocator *al) {
