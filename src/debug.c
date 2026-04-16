@@ -162,6 +162,12 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     return constant_instruction("OP_TRAIT", chunk, offset);
   case OP_TRAIT_METHOD:
     return constant_instruction("OP_TRAIT_METHOD", chunk, offset);
+  case OP_IMPL:
+    return simple_instruction("OP_IMPL", offset);
+  case OP_IMPL_METHOD:
+    return simple_instruction("OP_IMPL_METHOD", offset);
+  case OP_IMPL_COMMIT:
+    return simple_instruction("OP_IMPL_COMMIT", offset);
 
   default:
     printf("unknown opcode %d\n", instruction);

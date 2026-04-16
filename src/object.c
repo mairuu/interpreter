@@ -1,10 +1,12 @@
 #include "object.h"
 #include "dynamic_array.h"
+#include "memory.h"
 #include "value.h"
 
 #include <assert.h>
 #include <chunk.h>
 #include <stdio.h>
+#include <string.h>
 
 static void object_function_print(ObjectFunction *function) {
   printf("<fn %s>", function->name ? function->name->chars : "_");
@@ -35,6 +37,10 @@ void object_print(Object *obj) {
     break;
   case OBJECT_TRAIT_DEFINITION:
     printf("<trait %s>", ((ObjectTraitDefinition *)obj)->name->chars);
+    break;
+  case OBJECT_IMPL:
+    printf("<impl of %s for %s>", ((ObjectImpl *)obj)->trait->name->chars,
+           ((ObjectImpl *)obj)->struct_def->name->chars);
     break;
   default:
     assert(false && "unknown object type");
@@ -77,6 +83,15 @@ void object_string_free(ObjectString **obj, Allocator *al) {
   al_free(al, (*obj)->chars, (*obj)->length + 1);
   al_free(al, *obj, sizeof(ObjectString));
   *obj = NULL;
+}
+
+bool object_string_equals(ObjectString *a, ObjectString *b) {
+  if (a->is_interned && b->is_interned) {
+    return a == b;
+  }
+  if (a->length != b->length)
+    return false;
+  return memcmp(a->chars, b->chars, a->length) == 0;
 }
 
 ObjectFunction *object_function_new(Allocator *al) {
@@ -216,6 +231,44 @@ void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al) {
   *obj = NULL;
 }
 
+int object_trait_find_slot(ObjectTraitDefinition *trait,
+                           ObjectString *method_name) {
+  int method_count = array_count(trait->method_names);
+  for (int i = 0; i < method_count; i++) {
+    if (object_string_equals(trait->method_names[i], method_name)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+static inline size_t impl_size(ObjectTraitDefinition *trait) {
+  return sizeof(ObjectImpl) +
+         sizeof(ObjectClosure *) * array_count(trait->method_names);
+}
+
+ObjectImpl *object_impl_new(Allocator *al, ObjectTraitDefinition *trait,
+                            ObjectStructDefinition *struct_def) {
+  ObjectImpl *impl =
+      (ObjectImpl *)object_new(al, impl_size(trait), OBJECT_IMPL);
+  impl->trait = trait;
+  impl->struct_def = struct_def;
+
+  size_t method_count = array_count(trait->method_names);
+  for (size_t i = 0; i < method_count; i++) {
+    impl->methods[i] = NULL;
+  }
+  return impl;
+}
+
+void object_impl_free(ObjectImpl **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, impl_size((*obj)->trait));
+  *obj = NULL;
+}
+
 void object_free(Object **obj, Allocator *al) {
   switch ((*obj)->type) {
   case OBJECT_STRING:
@@ -241,6 +294,9 @@ void object_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_TRAIT_DEFINITION:
     object_trait_definition_free((ObjectTraitDefinition **)obj, al);
+    break;
+  case OBJECT_IMPL:
+    object_impl_free((ObjectImpl **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

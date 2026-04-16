@@ -136,6 +136,21 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     gc_mark_values(gc, instance->fields, instance->def->fields.count);
     break;
   }
+  case OBJECT_TRAIT_DEFINITION: {
+    ObjectTraitDefinition *trait = (ObjectTraitDefinition *)obj;
+    gc_mark_object(gc, (Object *)trait->name);
+    int method_count = array_count(trait->method_names);
+    for (int i = 0; i < method_count; i++) {
+      gc_mark_object(gc, (Object *)trait->method_names[i]);
+    }
+    break;
+  }
+  case OBJECT_IMPL: {
+    ObjectImpl *impl = (ObjectImpl *)obj;
+    gc_mark_object(gc, (Object *)impl->trait);
+    gc_mark_object(gc, (Object *)impl->struct_def);
+    break;
+  }
   default:
     assert(false && "unexpected object type");
   }

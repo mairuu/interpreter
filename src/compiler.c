@@ -21,6 +21,7 @@ void proto_init(Proto *proto, ProtoType type, char *name, Allocator *al) {
   proto->type = type;
   proto->name = name;
   proto->arity = 0;
+  proto->upvalue_count = 0;
   proto->code = array_new(al, uint8_t);
   proto->constants = array_new(al, RawConstant);
   proto->lines = array_new(al, int);
@@ -1303,6 +1304,52 @@ static void declaration_trait(CompilerContext *ctx) {
   ctx_define_variable(ctx, trait_name_constant);
 }
 
+static void declaration_impl(CompilerContext *ctx) {
+  ctx_consume(ctx, TOKEN_IDENTIFIER, "expect struct name after 'impl'.");
+  ctx_named_variable(ctx, ctx->parser.previous, false);
+  ctx_consume(ctx, TOKEN_FOR,
+              "expect 'for' after struct name in impl declaration.");
+  ctx_consume(ctx, TOKEN_IDENTIFIER,
+              "expect trait name after 'for' in impl declaration.");
+  ctx_named_variable(ctx, ctx->parser.previous, false);
+  ctx_emit_byte(ctx, OP_IMPL);
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before impl body.");
+
+  Token method_names[MAX_TRAIT_METHODS];
+  int method_name = 0;
+
+  while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+    ctx_consume(ctx, TOKEN_FUN, "expect method declaration in impl body.");
+
+    if (method_name >= MAX_TRAIT_METHODS) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "can't have more than " STRINGIFY(
+                       MAX_TRAIT_METHODS) " methods in an impl.");
+      while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF))
+        ctx_advance(ctx);
+      break;
+    }
+
+    for (int i = 0; i < method_name; i++) {
+      if (identifier_equals(&ctx->parser.current, &method_names[i])) {
+        DIAGNOSTIC(ctx, "duplicate method name in impl body.",
+                   {method_names[i], "first declared here"},
+                   {ctx->parser.current, "re-declared here"});
+      }
+    }
+
+    ctx_consume(ctx, TOKEN_IDENTIFIER, "expect method name in impl body.");
+    Token method_name_token = ctx->parser.previous;
+    ctx_compile_function(ctx, PROTO_FUNCTION, &method_name_token);
+
+    ctx_emit_byte(ctx, OP_IMPL_METHOD);
+  }
+
+  ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after impl body.");
+  ctx_emit_byte(ctx, OP_IMPL_COMMIT);
+}
+
 static void declaration(CompilerContext *ctx) {
   if (ctx_match(ctx, TOKEN_VAR)) {
     declaration_var(ctx);
@@ -1312,6 +1359,8 @@ static void declaration(CompilerContext *ctx) {
     declaration_struct(ctx);
   } else if (ctx_match(ctx, TOKEN_TRAIT)) {
     declaration_trait(ctx);
+  } else if (ctx_match(ctx, TOKEN_IMPL)) {
+    declaration_impl(ctx);
   } else {
     statement(ctx);
   }

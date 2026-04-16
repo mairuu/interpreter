@@ -95,6 +95,13 @@ static ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
   return trait;
 }
 
+static ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
+                               ObjectStructDefinition *struct_def) {
+  ObjectImpl *impl = object_impl_new(&vm->al, trait, struct_def);
+  vm_track_object(vm, &impl->object);
+  return impl;
+}
+
 static uint32_t hash_string(const char *str, int length) {
   uint32_t hash = 2166136261u;
   for (int i = 0; i < length; i++) {
@@ -833,6 +840,74 @@ static bool vm_run(VirtualMachine *vm) {
       ObjectString *method_name = READ_STRING();
       ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(vm_peek(vm, 0));
       array_push(trait->method_names, method_name, &vm->al);
+      break;
+    }
+
+    case OP_IMPL: {
+      Value trait_val = vm_peek(vm, 1);
+      if (!IS_TRAIT_DEFINITION(trait_val)) {
+        vm_runtime_error(vm, "expected a trait definition for impl");
+        break;
+      }
+      Value struct_val = vm_peek(vm, 0);
+      if (!IS_STRUCT_DEFINITION(struct_val)) {
+        vm_runtime_error(vm, "expected a struct definition for impl");
+        break;
+      }
+
+      ObjectImpl *impl = vm_new_impl(vm, AS_TRAIT_DEFINITION(trait_val),
+                                     AS_STRUCT_DEFINITION(struct_val));
+      vm_pop(vm); // pop the trait definition
+      vm_pop(vm); // pop the struct definition
+      vm_push(vm, OBJECT_VALUE(impl));
+      break;
+    }
+    case OP_IMPL_METHOD: {
+      Value method_val = vm_peek(vm, 0);
+      if (IS_FUNCTION(method_val)) {
+        // normalize method to closure
+        ObjectClosure *closure = vm_new_closure(vm, AS_FUNCTION(method_val));
+        method_val = OBJECT_VALUE(closure);
+        vm_pop(vm);
+        vm_push(vm, OBJECT_VALUE(closure));
+      }
+      assert(IS_CLOSURE(method_val) &&
+             "method should be a function or closure");
+
+      ObjectImpl *impl = AS_IMPL(vm_peek(vm, 1));
+      ObjectClosure *method = AS_CLOSURE(method_val);
+
+      int slot = object_trait_find_slot(impl->trait, method->function->name);
+      if (slot == -1) {
+        vm_runtime_error(vm, "method '%s' not found in trait '%s'",
+                         method->function->name->chars,
+                         impl->trait->name->chars);
+        break;
+      }
+
+      impl->methods[slot] = method;
+      vm_pop(vm); // pop the method
+      break;
+    }
+    case OP_IMPL_COMMIT: {
+      Value impl_val = vm_peek(vm, 0);
+      assert(IS_IMPL(impl_val) && "expected an impl on the stack");
+      ObjectImpl *impl = AS_IMPL(impl_val);
+
+      int method_count = array_count(impl->trait->method_names);
+      for (int i = 0; i < method_count; i++) {
+        if (impl->methods[i] == NULL) {
+          vm_runtime_error(vm,
+                           "method '%s' not implemented for struct '%s' "
+                           "required by trait '%s'",
+                           impl->trait->method_names[i]->chars,
+                           impl->struct_def->name->chars,
+                           impl->trait->name->chars);
+          break;
+        }
+      }
+      array_push(impl->struct_def->impls, impl, &vm->al);
+      vm_pop(vm); // pop the impl
       break;
     }
 

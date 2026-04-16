@@ -14,7 +14,8 @@ typedef enum {
   OBJECT_NATIVE,
   OBJECT_STRUCT_DEFINITION,
   OBJECT_STRUCT_INSTANCE,
-  OBJECT_TRAIT_DEFINITION
+  OBJECT_TRAIT_DEFINITION,
+  OBJECT_IMPL,
 } ObjectType;
 
 struct Object {
@@ -61,11 +62,14 @@ typedef struct {
   NavtiveFunc function;
 } ObjectNative;
 
+typedef struct ObjectImpl ObjectImpl;
+
 typedef struct {
   Object object;
   ObjectString *name; // for debugging and error messages
   uint16_t definition_id;
   HashTable fields; // field_name => field_index
+  ObjectImpl **impls;
 } ObjectStructDefinition;
 
 typedef struct {
@@ -80,6 +84,13 @@ typedef struct {
   uint16_t trait_id;
   ObjectString **method_names;
 } ObjectTraitDefinition;
+
+typedef struct ObjectImpl {
+  Object object;
+  ObjectTraitDefinition *trait;
+  ObjectStructDefinition *struct_def;
+  ObjectClosure *methods[];
+} ObjectImpl;
 
 void object_print(Object *obj);
 
@@ -98,6 +109,7 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
   value_is_object_type(value, OBJECT_STRUCT_INSTANCE)
 #define IS_TRAIT_DEFINITION(value)                                             \
   value_is_object_type(value, OBJECT_TRAIT_DEFINITION)
+#define IS_IMPL(value) value_is_object_type(value, OBJECT_IMPL)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
@@ -107,6 +119,7 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
 #define AS_STRUCT_DEFINITION(value) ((ObjectStructDefinition *)AS_OBJECT(value))
 #define AS_STRUCT_INSTANCE(value) ((ObjectStructInstance *)AS_OBJECT(value))
 #define AS_TRAIT_DEFINITION(value) ((ObjectTraitDefinition *)AS_OBJECT(value))
+#define AS_IMPL(value) ((ObjectImpl *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void object_free(Object **obj, Allocator *al);
@@ -117,6 +130,7 @@ ObjectString object_string_create(const char *chars, int length, uint32_t hash);
 ObjectString *object_string_new(Allocator *al, char *chars, int length,
                                 uint32_t hash);
 void object_string_free(ObjectString **obj, Allocator *al);
+bool object_string_equals(ObjectString *a, ObjectString *b);
 
 ObjectFunction *object_function_new(Allocator *al);
 void object_function_free(ObjectFunction **obj, Allocator *al);
@@ -143,3 +157,9 @@ ObjectTraitDefinition *object_trait_definition_new(Allocator *al,
                                                    ObjectString *name,
                                                    uint32_t trait_id);
 void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al);
+int object_trait_find_slot(ObjectTraitDefinition *trait,
+                           ObjectString *method_name);
+
+ObjectImpl *object_impl_new(Allocator *al, ObjectTraitDefinition *trait,
+                            ObjectStructDefinition *struct_def);
+void object_impl_free(ObjectImpl **obj, Allocator *al);

@@ -3,19 +3,9 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <string.h>
 
 bool value_is_falsey(Value value) {
   return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
-}
-
-static bool string_equals(ObjectString *a, ObjectString *b) {
-  if (a->is_interned && b->is_interned) {
-    return a == b;
-  }
-  if (a->length != b->length)
-    return false;
-  return memcmp(a->chars, b->chars, a->length) == 0;
 }
 
 bool value_equals(Value a, Value b) {
@@ -33,7 +23,7 @@ bool value_equals(Value a, Value b) {
   case VALUE_OBJECT:
     if (a.as.object->type == OBJECT_STRING &&
         b.as.object->type == OBJECT_STRING) {
-      return string_equals(AS_STRING(a), AS_STRING(b));
+      return object_string_equals(AS_STRING(a), AS_STRING(b));
     }
     return AS_OBJECT(a) == AS_OBJECT(b);
   case VALUE_EMPTY:

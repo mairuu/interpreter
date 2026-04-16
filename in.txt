@@ -9,5 +9,7 @@ struct Range {
   current
 }
 
-println(Iterable)
-println(Range)
+impl Iterable for Range {
+  fun has_next(self) { return self.current < self.end }
+  fun next(self) { return self.current = self.current + 1 }
+}

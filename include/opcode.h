@@ -42,6 +42,10 @@ typedef enum {
   OP_TRAIT,        // name_const > pushes ObjectTraitDefinition
   OP_TRAIT_METHOD, // name_const > registers method slot on top-of-stack trait
 
+  OP_IMPL,        // pushes ObjectImpl (empty)
+  OP_IMPL_METHOD, // slot_idx, closure > fills method slot on top-of-stack impl
+  OP_IMPL_COMMIT, // pops ObjectImpl, registers it on its struct_def
+
   OP_CALL,
   OP_RETURN,
 
