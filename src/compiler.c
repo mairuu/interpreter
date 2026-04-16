@@ -1212,7 +1212,8 @@ static void declaration_fun(CompilerContext *ctx) {
   ctx_define_variable(ctx, global);
 }
 
-#define MAX_STRUCT_FIELDS 255
+#define MAX_STRUCT_FIELDS 64
+#define STRINGIFY(x) #x
 
 static void declaration_struct(CompilerContext *ctx) {
   ctx_consume(ctx, TOKEN_IDENTIFIER, "expect struct name.");
@@ -1226,29 +1227,80 @@ static void declaration_struct(CompilerContext *ctx) {
   Token field_names[MAX_STRUCT_FIELDS];
   int field_count = 0;
 
-  if (!ctx_check(ctx, TOKEN_RIGHT_BRACE)) {
-    do {
-      ctx_consume(ctx, TOKEN_IDENTIFIER, "expect field name in struct body.");
+  while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+    if (field_count >= MAX_STRUCT_FIELDS) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "can't have more than " STRINGIFY(
+                       MAX_STRUCT_FIELDS) " fields in a struct.");
+      while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF))
+        ctx_advance(ctx);
+      break;
+    }
 
-      for (int i = 0; i < field_count; i++) {
-        if (identifier_equals(&ctx->parser.previous, &field_names[i])) {
-          DIAGNOSTIC(ctx, "duplicate field name in struct body.",
-                     {field_names[i], "first declared here"},
-                     {ctx->parser.previous, "re-declared here"});
-        }
+    ctx_consume(ctx, TOKEN_IDENTIFIER, "expect field name in struct body.");
+
+    for (int i = 0; i < field_count; i++) {
+      if (identifier_equals(&ctx->parser.previous, &field_names[i])) {
+        DIAGNOSTIC(ctx, "duplicate field name in struct body.",
+                   {field_names[i], "first declared here"},
+                   {ctx->parser.previous, "re-declared here"});
       }
+    }
 
-      field_names[field_count++] = ctx->parser.previous;
-      uint8_t field_name_constant =
-          ctx_identifier_constant(ctx, &ctx->parser.previous);
-      ctx_emit_bytes(ctx, OP_STRUCT_FIELD, field_name_constant);
-
-    } while (ctx_match(ctx, TOKEN_COMMA));
+    field_names[field_count++] = ctx->parser.previous;
+    uint8_t field_name_constant =
+        ctx_identifier_constant(ctx, &ctx->parser.previous);
+    ctx_emit_bytes(ctx, OP_STRUCT_FIELD, field_name_constant);
   }
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after struct body.");
 
   ctx_define_variable(ctx, struct_name_constant);
+}
+
+#define MAX_TRAIT_METHODS 64
+
+static void declaration_trait(CompilerContext *ctx) {
+  ctx_consume(ctx, TOKEN_IDENTIFIER, "expect trait name.");
+
+  uint8_t trait_name_constant =
+      ctx_identifier_constant(ctx, &ctx->parser.previous);
+  ctx_emit_bytes(ctx, OP_TRAIT, trait_name_constant);
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before trait body.");
+
+  Token method_names[MAX_TRAIT_METHODS];
+  int method_name = 0;
+
+  while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+    if (method_name >= MAX_TRAIT_METHODS) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "can't have more than " STRINGIFY(
+                       MAX_TRAIT_METHODS) " methods in a trait.");
+      while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF))
+        ctx_advance(ctx);
+      break;
+    }
+
+    ctx_consume(ctx, TOKEN_IDENTIFIER, "expect method name.");
+
+    for (int i = 0; i < method_name; i++) {
+      if (identifier_equals(&ctx->parser.previous, &method_names[i])) {
+        DIAGNOSTIC(ctx, "duplicate method name in trait body.",
+                   {method_names[i], "first declared here"},
+                   {ctx->parser.previous, "re-declared here"});
+      }
+    }
+
+    method_names[method_name++] = ctx->parser.previous;
+    uint8_t field_name_constant =
+        ctx_identifier_constant(ctx, &ctx->parser.previous);
+    ctx_emit_bytes(ctx, OP_TRAIT_METHOD, field_name_constant);
+  }
+
+  ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after trait body.");
+
+  ctx_define_variable(ctx, trait_name_constant);
 }
 
 static void declaration(CompilerContext *ctx) {
@@ -1258,6 +1310,8 @@ static void declaration(CompilerContext *ctx) {
     declaration_fun(ctx);
   } else if (ctx_match(ctx, TOKEN_STRUCT)) {
     declaration_struct(ctx);
+  } else if (ctx_match(ctx, TOKEN_TRAIT)) {
+    declaration_trait(ctx);
   } else {
     statement(ctx);
   }

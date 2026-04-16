@@ -158,6 +158,11 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_STRUCT_FIELD:
     return constant_instruction("OP_STRUCT_FIELD", chunk, offset);
 
+  case OP_TRAIT:
+    return constant_instruction("OP_TRAIT", chunk, offset);
+  case OP_TRAIT_METHOD:
+    return constant_instruction("OP_TRAIT_METHOD", chunk, offset);
+
   default:
     printf("unknown opcode %d\n", instruction);
     return offset + 1;

@@ -13,7 +13,8 @@ typedef enum {
   OBJECT_CLOSURE,
   OBJECT_NATIVE,
   OBJECT_STRUCT_DEFINITION,
-  OBJECT_STRUCT_INSTANCE
+  OBJECT_STRUCT_INSTANCE,
+  OBJECT_TRAIT_DEFINITION
 } ObjectType;
 
 struct Object {
@@ -73,6 +74,13 @@ typedef struct {
   Value fields[];
 } ObjectStructInstance;
 
+typedef struct {
+  Object object;
+  ObjectString *name;
+  uint16_t trait_id;
+  ObjectString **method_names;
+} ObjectTraitDefinition;
+
 void object_print(Object *obj);
 
 static inline bool value_is_object_type(Value value, ObjectType type) {
@@ -88,6 +96,8 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
   value_is_object_type(value, OBJECT_STRUCT_DEFINITION)
 #define IS_STRUCT_INSTANCE(value)                                              \
   value_is_object_type(value, OBJECT_STRUCT_INSTANCE)
+#define IS_TRAIT_DEFINITION(value)                                             \
+  value_is_object_type(value, OBJECT_TRAIT_DEFINITION)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
@@ -96,6 +106,7 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
 #define AS_NATIVE(value) ((ObjectNative *)AS_OBJECT(value))
 #define AS_STRUCT_DEFINITION(value) ((ObjectStructDefinition *)AS_OBJECT(value))
 #define AS_STRUCT_INSTANCE(value) ((ObjectStructInstance *)AS_OBJECT(value))
+#define AS_TRAIT_DEFINITION(value) ((ObjectTraitDefinition *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void object_free(Object **obj, Allocator *al);
@@ -127,3 +138,8 @@ void object_struct_definition_free(ObjectStructDefinition **obj, Allocator *al);
 ObjectStructInstance *object_struct_instance_new(Allocator *al,
                                                  ObjectStructDefinition *def);
 void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al);
+
+ObjectTraitDefinition *object_trait_definition_new(Allocator *al,
+                                                   ObjectString *name,
+                                                   uint32_t trait_id);
+void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al);

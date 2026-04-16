@@ -1,14 +1,13 @@
-struct Point {
-    x,
-    y,
-    name
+trait Iterable {
+  has_next
+  next
 }
 
-{
-    var p = Point(3, 4, "was")
-    for var i = 0; i < 3; i = i + 1 {
-        p.y = p.y + p.x
-    }
-
-    println(p.y)
+struct Range {
+  start
+  end
+  current
 }
+
+println(Iterable)
+println(Range)

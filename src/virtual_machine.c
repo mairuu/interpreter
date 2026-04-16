@@ -2,6 +2,7 @@
 
 #include "chunk.h"
 #include "compiler.h"
+#include "dynamic_array.h"
 #include "hash_table.h"
 #include "memory.h"
 #include "object.h"
@@ -83,6 +84,15 @@ vm_new_struct_instance(VirtualMachine *vm, ObjectStructDefinition *def) {
   ObjectStructInstance *instance = object_struct_instance_new(&vm->al, def);
   vm_track_object(vm, &instance->obj);
   return instance;
+}
+
+static ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
+                                                      ObjectString *name,
+                                                      uint16_t trait_id) {
+  ObjectTraitDefinition *trait =
+      object_trait_definition_new(&vm->al, name, trait_id);
+  vm_track_object(vm, &trait->object);
+  return trait;
 }
 
 static uint32_t hash_string(const char *str, int length) {
@@ -763,30 +773,6 @@ static bool vm_run(VirtualMachine *vm) {
       break;
     }
 
-    case OP_CALL: {
-      uint8_t arg_count = READ_BYTE();
-      frame->ip = ip;
-      Value callee = vm_peek(vm, arg_count);
-      if (vm_call_value(vm, callee, arg_count)) {
-        frame = &vm->frames[vm->frame_count - 1];
-        ip = frame->ip;
-      }
-      break;
-    }
-    case OP_RETURN:
-      Value result = vm_pop(vm);
-      vm_close_upvalues(vm, frame->base);
-      vm->frame_count--;
-      if (vm->frame_count == 0) {
-        vm_pop(vm);
-        return true;
-      }
-      vm->stack.top = frame->base;
-      vm_push(vm, result);
-      frame = &vm->frames[vm->frame_count - 1];
-      ip = frame->ip;
-      break;
-
     case OP_CLOSURE: {
       ObjectClosure *closure = vm_new_closure(vm, AS_FUNCTION(READ_CONSTANT()));
       vm_push(vm, OBJECT_VALUE(closure));
@@ -832,6 +818,46 @@ static bool vm_run(VirtualMachine *vm) {
       ObjectStructDefinition *def = AS_STRUCT_DEFINITION(vm_peek(vm, 0));
       ht_put(&def->fields, OBJECT_VALUE(field_name),
              NUMBER_VALUE(def->fields.count), &vm->al);
+      break;
+    }
+
+    case OP_TRAIT: {
+      static uint16_t next_trait_id = 1;
+      ObjectString *name = READ_STRING();
+      ObjectTraitDefinition *trait =
+          vm_new_trait_definition(vm, name, next_trait_id++);
+      vm_push(vm, OBJECT_VALUE(trait));
+      break;
+    }
+    case OP_TRAIT_METHOD: {
+      ObjectString *method_name = READ_STRING();
+      ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(vm_peek(vm, 0));
+      array_push(trait->method_names, method_name, &vm->al);
+      break;
+    }
+
+    case OP_CALL: {
+      uint8_t arg_count = READ_BYTE();
+      frame->ip = ip;
+      Value callee = vm_peek(vm, arg_count);
+      if (vm_call_value(vm, callee, arg_count)) {
+        frame = &vm->frames[vm->frame_count - 1];
+        ip = frame->ip;
+      }
+      break;
+    }
+    case OP_RETURN: {
+      Value result = vm_pop(vm);
+      vm_close_upvalues(vm, frame->base);
+      vm->frame_count--;
+      if (vm->frame_count == 0) {
+        vm_pop(vm);
+        return true;
+      }
+      vm->stack.top = frame->base;
+      vm_push(vm, result);
+      frame = &vm->frames[vm->frame_count - 1];
+      ip = frame->ip;
       break;
     }
 

@@ -36,11 +36,14 @@ typedef enum {
   OP_CLOSURE,
   OP_CLOSE_UPVALUE,
 
-  OP_CALL,
-  OP_RETURN,
-
   OP_STRUCT,
   OP_STRUCT_FIELD,
+
+  OP_TRAIT,        // name_const > pushes ObjectTraitDefinition
+  OP_TRAIT_METHOD, // name_const > registers method slot on top-of-stack trait
+
+  OP_CALL,
+  OP_RETURN,
 
   // OP_PRINT,
 } OpCode;

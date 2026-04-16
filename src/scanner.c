@@ -158,7 +158,15 @@ static TokenType identifier_type(Scanner *s) {
     }
     break;
   case 'i':
-    return check_keyword(s, 1, 1, "f", TOKEN_IF);
+    if (s->current - s->start > 1) {
+      switch (s->start[1]) {
+      case 'f':
+        return check_keyword(s, 2, 0, "", TOKEN_IF);
+      case 'm':
+        return check_keyword(s, 2, 2, "pl", TOKEN_IMPL);
+      }
+    }
+    break;
   case 'n':
     return check_keyword(s, 1, 2, "il", TOKEN_NIL);
   case 'o':
@@ -176,8 +184,16 @@ static TokenType identifier_type(Scanner *s) {
       switch (s->start[1]) {
       case 'h':
         return check_keyword(s, 2, 2, "is", TOKEN_THIS);
-      case 'r':
-        return check_keyword(s, 2, 2, "ue", TOKEN_TRUE);
+      case 'r': {
+        if (s->current - s->start > 2) {
+          switch (s->start[2]) {
+          case 'a':
+            return check_keyword(s, 3, 2, "it", TOKEN_TRAIT);
+          case 'u':
+            return check_keyword(s, 3, 1, "e", TOKEN_TRUE);
+          }
+        }
+      }
       }
     }
     break;

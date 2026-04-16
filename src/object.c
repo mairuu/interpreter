@@ -1,4 +1,5 @@
 #include "object.h"
+#include "dynamic_array.h"
 #include "value.h"
 
 #include <assert.h>
@@ -32,6 +33,11 @@ void object_print(Object *obj) {
   case OBJECT_STRUCT_INSTANCE:
     printf("<instance of %s>", ((ObjectStructInstance *)obj)->def->name->chars);
     break;
+  case OBJECT_TRAIT_DEFINITION:
+    printf("<trait %s>", ((ObjectTraitDefinition *)obj)->name->chars);
+    break;
+  default:
+    assert(false && "unknown object type");
   }
 }
 
@@ -99,10 +105,12 @@ ObjectUpvalue *object_upvalue_new(Allocator *al, Value *location) {
 }
 
 void object_upvalue_free(ObjectUpvalue **obj, Allocator *al) {
-  if (*obj) {
-    al_free(al, *obj, sizeof(ObjectUpvalue));
-    *obj = NULL;
+  if (!*obj) {
+    return;
   }
+
+  al_free(al, *obj, sizeof(ObjectUpvalue));
+  *obj = NULL;
 }
 
 static inline size_t closure_size(int upvalue_count) {
@@ -121,16 +129,24 @@ ObjectClosure *object_closure_new(Allocator *al, ObjectFunction *function) {
 }
 
 void object_closure_free(ObjectClosure **obj, Allocator *al) {
-  if (*obj) {
-    al_free(al, *obj, closure_size((*obj)->upvalue_count));
-    *obj = NULL;
+  if (!*obj) {
+    return;
   }
+  al_free(al, *obj, closure_size((*obj)->upvalue_count));
+  *obj = NULL;
 }
 
 ObjectNative *object_native_new(Allocator *al, NavtiveFunc function) {
   ObjectNative *native = OBJECT_NEW(al, ObjectNative, OBJECT_NATIVE);
   native->function = function;
   return native;
+}
+
+void object_native_free(ObjectNative **obj, Allocator *al) {
+  if (*obj) {
+    al_free(al, *obj, sizeof(ObjectNative));
+    *obj = NULL;
+  }
 }
 
 ObjectStructDefinition *object_struct_definition_new(Allocator *al,
@@ -146,11 +162,13 @@ ObjectStructDefinition *object_struct_definition_new(Allocator *al,
 
 void object_struct_definition_free(ObjectStructDefinition **obj,
                                    Allocator *al) {
-  if (*obj) {
-    ht_destroy(&(*obj)->fields, al);
-    al_free(al, *obj, sizeof(ObjectStructDefinition));
-    *obj = NULL;
+  if (!*obj) {
+    return;
   }
+
+  ht_destroy(&(*obj)->fields, al);
+  al_free(al, *obj, sizeof(ObjectStructDefinition));
+  *obj = NULL;
 }
 
 static inline size_t struct_instance_size(ObjectStructDefinition *def) {
@@ -169,17 +187,33 @@ ObjectStructInstance *object_struct_instance_new(Allocator *al,
 }
 
 void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al) {
-  if (*obj) {
-    al_free(al, *obj, struct_instance_size((*obj)->def));
-    *obj = NULL;
+  if (!*obj) {
+    return;
   }
+
+  al_free(al, *obj, struct_instance_size((*obj)->def));
+  *obj = NULL;
 }
 
-void object_native_free(ObjectNative **obj, Allocator *al) {
-  if (*obj) {
-    al_free(al, *obj, sizeof(ObjectNative));
-    *obj = NULL;
+ObjectTraitDefinition *object_trait_definition_new(Allocator *al,
+                                                   ObjectString *name,
+                                                   uint32_t trait_id) {
+  ObjectTraitDefinition *trait =
+      OBJECT_NEW(al, ObjectTraitDefinition, OBJECT_TRAIT_DEFINITION);
+  trait->name = name;
+  trait->trait_id = trait_id;
+  array_init(trait->method_names, ObjectString *, al);
+  return trait;
+}
+
+void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al) {
+  if (!*obj) {
+    return;
   }
+
+  array_free((*obj)->method_names, al);
+  al_free(al, *obj, sizeof(ObjectTraitDefinition));
+  *obj = NULL;
 }
 
 void object_free(Object **obj, Allocator *al) {
@@ -204,6 +238,9 @@ void object_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_STRUCT_INSTANCE:
     object_struct_instance_free((ObjectStructInstance **)obj, al);
+    break;
+  case OBJECT_TRAIT_DEFINITION:
+    object_trait_definition_free((ObjectTraitDefinition **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

@@ -44,6 +44,7 @@ typedef enum {
   TOKEN_FOR,
   TOKEN_FUN,
   TOKEN_IF,
+  TOKEN_IMPL,
   TOKEN_NIL,
   TOKEN_OR,
   // TOKEN_PRINT,
@@ -51,6 +52,7 @@ typedef enum {
   // TOKEN_SUPER,
   TOKEN_STRUCT,
   TOKEN_THIS,
+  TOKEN_TRAIT,
   TOKEN_TRUE,
   TOKEN_VAR,
 

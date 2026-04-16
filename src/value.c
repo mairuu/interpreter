@@ -61,5 +61,7 @@ void value_print(Value value) {
   case VALUE_EMPTY:
     printf("<empty>");
     break;
+  default:
+    assert(false && "invalid value type");
   }
 }
