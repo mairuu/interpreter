@@ -36,3 +36,12 @@ void chunk_load_from_proto(Chunk *chunk, const Proto *proto,
                loader->load_constant(loader, al, &proto->constants[i]), al);
   }
 }
+
+void chunk_patch_byte(Chunk *chunk, int offset, uint8_t byte) {
+  chunk->instructions[offset] = byte;
+}
+
+void chunk_patch_short(Chunk *chunk, int offset, uint16_t value) {
+  chunk->instructions[offset] = (value >> 8) & 0xFF;
+  chunk->instructions[offset + 1] = value & 0xFF;
+}

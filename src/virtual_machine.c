@@ -69,6 +69,22 @@ static ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
   return native;
 }
 
+static ObjectStructDefinition *
+vm_new_struct_definition(VirtualMachine *vm, ObjectString *name,
+                         uint16_t definition_id) {
+  ObjectStructDefinition *def =
+      object_struct_definition_new(&vm->al, name, definition_id);
+  vm_track_object(vm, &def->object);
+  return def;
+}
+
+static ObjectStructInstance *
+vm_new_struct_instance(VirtualMachine *vm, ObjectStructDefinition *def) {
+  ObjectStructInstance *instance = object_struct_instance_new(&vm->al, def);
+  vm_track_object(vm, &instance->obj);
+  return instance;
+}
+
 static uint32_t hash_string(const char *str, int length) {
   uint32_t hash = 2166136261u;
   for (int i = 0; i < length; i++) {
@@ -269,6 +285,26 @@ static bool vm_call_closure(VirtualMachine *vm, ObjectClosure *closure,
   return true;
 }
 
+static bool vm_call_struct_constructor(VirtualMachine *vm,
+                                       ObjectStructDefinition *def,
+                                       int arg_count) {
+  if (arg_count != def->fields.count) {
+    vm_runtime_error(vm, "expected %d arguments but got %d", def->fields.count,
+                     arg_count);
+    return false;
+  }
+
+  ObjectStructInstance *instance = vm_new_struct_instance(vm, def);
+  for (int i = def->fields.count - 1; i >= 0; i--) {
+    instance->fields[i] = vm_pop(vm);
+  }
+
+  vm_pop(vm); // pop the struct definition
+  vm_push(vm, OBJECT_VALUE(instance));
+
+  return true;
+}
+
 static bool vm_call_value(VirtualMachine *vm, Value callee, int arg_count) {
   if (IS_OBJECT(callee)) {
     switch (AS_OBJECT(callee)->type) {
@@ -285,6 +321,9 @@ static bool vm_call_value(VirtualMachine *vm, Value callee, int arg_count) {
       vm_push(vm, result);
       return true;
     }
+    case OBJECT_STRUCT_DEFINITION:
+      return vm_call_struct_constructor(vm, AS_STRUCT_DEFINITION(callee),
+                                        arg_count);
     default:
       break; // non-callable object type
     }
@@ -486,6 +525,39 @@ static void vm_close_upvalues(VirtualMachine *vm, Value *last) {
   }
 }
 
+static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
+                                 uint8_t *ip, Chunk *chunk, uint8_t name_idx,
+                                 uint16_t cached_id, uint8_t cached_offset) {
+  if (!IS_STRUCT_INSTANCE(receiver)) {
+    vm_runtime_error(vm, "only struct instances have fields");
+    return NULL;
+  }
+
+  ObjectStructInstance *instance = AS_STRUCT_INSTANCE(receiver);
+
+  if (instance->def->definition_id == cached_id) {
+    return &instance->fields[cached_offset];
+  }
+
+  ObjectString *name = AS_STRING(chunk->constants[name_idx]);
+  Value *offset_val = ht_get(&instance->def->fields, OBJECT_VALUE(name));
+
+  if (offset_val) {
+    uint8_t offset = (uint8_t)AS_NUMBER(*offset_val);
+    int instruction_start = (ip - 5) - chunk->instructions;
+
+    chunk_patch_short(chunk, instruction_start + 2,
+                      instance->def->definition_id);
+
+    chunk_patch_byte(chunk, instruction_start + 4, offset);
+
+    return &instance->fields[offset];
+  }
+
+  vm_runtime_error(vm, "undefined field '%s'.", name->chars);
+  return NULL;
+}
+
 static bool vm_run(VirtualMachine *vm) {
   CallFrame *frame = &vm->frames[vm->frame_count - 1];
   uint8_t *ip = frame->ip;
@@ -639,6 +711,39 @@ static bool vm_run(VirtualMachine *vm) {
       *frame->upvalues[slot]->location = vm_peek(vm, 0);
       break;
     }
+    case OP_GET_FIELD: {
+      uint8_t name_idx = READ_BYTE();
+      uint16_t cached_id = READ_SHORT();
+      uint8_t cached_offset = READ_BYTE();
+
+      Value receiver = vm_peek(vm, 0);
+      Value *field_ref =
+          vm_field_reference(vm, receiver, ip, &frame->function->chunk,
+                             name_idx, cached_id, cached_offset);
+      if (field_ref) {
+        vm_pop(vm); // pop the receiver
+        vm_push(vm, *field_ref);
+      }
+      break;
+    }
+    case OP_SET_FIELD: {
+      uint8_t name_idx = READ_BYTE();
+      uint16_t cached_id = READ_SHORT();
+      uint8_t cached_offset = READ_BYTE();
+
+      Value receiver = vm_peek(vm, 1);
+
+      Value *field_ref =
+          vm_field_reference(vm, receiver, ip, &frame->function->chunk,
+                             name_idx, cached_id, cached_offset);
+      if (field_ref) {
+        *field_ref = vm_peek(vm, 0);
+        vm_pop(vm); // pop the value
+        vm_pop(vm); // pop the receiver
+        vm_push(vm, *field_ref);
+      }
+      break;
+    }
 
     case OP_JUMP_IF_FALSE: {
       uint16_t offset = READ_SHORT();
@@ -700,6 +805,33 @@ static bool vm_run(VirtualMachine *vm) {
     }
     case OP_CLOSE_UPVALUE: {
       vm_close_upvalues(vm, vm->stack.top - 1);
+      break;
+    }
+
+    case OP_STRUCT: {
+      // quick hack
+      static uint16_t next_definition_id = 1;
+
+      if (next_definition_id == UINT16_MAX) {
+        vm_runtime_error(vm, "too many struct definitions (max %d)",
+                         UINT16_MAX);
+        // this thing is not recoverable
+        exit(1);
+        break;
+      }
+
+      ObjectString *name = READ_STRING();
+      ObjectStructDefinition *def =
+          vm_new_struct_definition(vm, name, next_definition_id++);
+
+      vm_push(vm, OBJECT_VALUE(def));
+      break;
+    }
+    case OP_STRUCT_FIELD: {
+      ObjectString *field_name = READ_STRING();
+      ObjectStructDefinition *def = AS_STRUCT_DEFINITION(vm_peek(vm, 0));
+      ht_put(&def->fields, OBJECT_VALUE(field_name),
+             NUMBER_VALUE(def->fields.count), &vm->al);
       break;
     }
 

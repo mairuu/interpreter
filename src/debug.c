@@ -36,6 +36,20 @@ static int jump_instruction(const char *name, Chunk *chunk, bool is_forward,
   return offset + 3;
 }
 
+static int field_instruction(const char *name, Chunk *chunk, int offset) {
+  // [op_code, name_constant, def_id, def_id, offset]
+  uint8_t name_constant = chunk->instructions[offset + 1];
+  uint16_t def_id = (uint16_t)(chunk->instructions[offset + 2] << 8) |
+                    chunk->instructions[offset + 3];
+  uint8_t offset_val = chunk->instructions[offset + 4];
+  // printf("%-16s %d %d %d\n", name, name_constant, def_id, offset_val);
+  printf("%-16s %d ", name, name_constant);
+  Value constant = chunk->constants[name_constant];
+  value_print(constant);
+  printf(" %d %d\n", def_id, offset_val);
+  return offset + 5;
+}
+
 void disassemble_chunk(Chunk *chunk, const char *name) {
   printf("== %s ==\n", name);
 
@@ -102,6 +116,10 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     return byte_instruction("OP_GET_UPVALUE", chunk, offset);
   case OP_SET_UPVALUE:
     return byte_instruction("OP_SET_UPVALUE", chunk, offset);
+  case OP_GET_FIELD:
+    return field_instruction("OP_GET_FIELD", chunk, offset);
+  case OP_SET_FIELD:
+    return field_instruction("OP_SET_FIELD", chunk, offset);
 
   case OP_JUMP_IF_FALSE:
     return jump_instruction("OP_JUMP_IF_FALSE", chunk, true, offset);
@@ -134,6 +152,11 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   }
   case OP_CLOSE_UPVALUE:
     return simple_instruction("OP_CLOSE_UPVALUE", offset);
+
+  case OP_STRUCT:
+    return constant_instruction("OP_STRUCT", chunk, offset);
+  case OP_STRUCT_FIELD:
+    return constant_instruction("OP_STRUCT_FIELD", chunk, offset);
 
   default:
     printf("unknown opcode %d\n", instruction);

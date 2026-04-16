@@ -1,15 +1,19 @@
 #pragma once
 
 #include "chunk.h"
+#include "hash_table.h"
 #include "memory.h"
 #include "value.h"
+#include <stdint.h>
 
 typedef enum {
   OBJECT_STRING,
   OBJECT_FUNCTION,
   OBJECT_UPVALUE,
   OBJECT_CLOSURE,
-  OBJECT_NATIVE
+  OBJECT_NATIVE,
+  OBJECT_STRUCT_DEFINITION,
+  OBJECT_STRUCT_INSTANCE
 } ObjectType;
 
 struct Object {
@@ -56,6 +60,19 @@ typedef struct {
   NavtiveFunc function;
 } ObjectNative;
 
+typedef struct {
+  Object object;
+  ObjectString *name; // for debugging and error messages
+  uint16_t definition_id;
+  HashTable fields; // field_name => field_index
+} ObjectStructDefinition;
+
+typedef struct {
+  Object obj;
+  ObjectStructDefinition *def;
+  Value fields[];
+} ObjectStructInstance;
+
 void object_print(Object *obj);
 
 static inline bool value_is_object_type(Value value, ObjectType type) {
@@ -67,12 +84,18 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
 #define IS_UPVALUE(value) value_is_object_type(value, OBJECT_UPVALUE)
 #define IS_CLOSURE(value) value_is_object_type(value, OBJECT_CLOSURE)
 #define IS_NATIVE(value) value_is_object_type(value, OBJECT_NATIVE)
+#define IS_STRUCT_DEFINITION(value)                                            \
+  value_is_object_type(value, OBJECT_STRUCT_DEFINITION)
+#define IS_STRUCT_INSTANCE(value)                                              \
+  value_is_object_type(value, OBJECT_STRUCT_INSTANCE)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
 #define AS_UPVALUE(value) ((ObjectUpvalue *)AS_OBJECT(value))
 #define AS_CLOSURE(value) ((ObjectClosure *)AS_OBJECT(value))
 #define AS_NATIVE(value) ((ObjectNative *)AS_OBJECT(value))
+#define AS_STRUCT_DEFINITION(value) ((ObjectStructDefinition *)AS_OBJECT(value))
+#define AS_STRUCT_INSTANCE(value) ((ObjectStructInstance *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void object_free(Object **obj, Allocator *al);
@@ -95,3 +118,12 @@ void object_closure_free(ObjectClosure **obj, Allocator *al);
 
 ObjectNative *object_native_new(Allocator *al, NavtiveFunc function);
 void object_native_free(ObjectNative **obj, Allocator *al);
+
+ObjectStructDefinition *object_struct_definition_new(Allocator *al,
+                                                     ObjectString *name,
+                                                     uint32_t definition_id);
+void object_struct_definition_free(ObjectStructDefinition **obj, Allocator *al);
+
+ObjectStructInstance *object_struct_instance_new(Allocator *al,
+                                                 ObjectStructDefinition *def);
+void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al);

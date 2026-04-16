@@ -410,13 +410,14 @@ static void ctx_synchronize(CompilerContext *ctx) {
 
     switch (ctx->parser.current.type) {
     case TOKEN_RIGHT_BRACE:
-    case TOKEN_CLASS:
+    // case TOKEN_CLASS:
     case TOKEN_FUN:
     case TOKEN_VAR:
     case TOKEN_FOR:
     case TOKEN_IF:
     // case TOKEN_PRINT:
     case TOKEN_RETURN:
+    case TOKEN_STRUCT:
       return;
     default:
       break;
@@ -458,6 +459,7 @@ static void string(CompilerContext *ctx, bool can_assign);
 static void variable(CompilerContext *ctx, bool can_assign);
 static void and_(CompilerContext *ctx, bool can_assign);
 static void or_(CompilerContext *ctx, bool can_assign);
+static void dot(CompilerContext *ctx, bool can_assign);
 
 // expression
 static void if_(CompilerContext *ctx, bool can_assign);
@@ -470,7 +472,7 @@ ParseRule rules[] = {
     [TOKEN_RIGHT_BRACE] = {NULL, NULL, PREC_NONE},
     [TOKEN_COLON] = {NULL, NULL, PREC_NONE},
     [TOKEN_COMMA] = {NULL, NULL, PREC_NONE},
-    [TOKEN_DOT] = {NULL, NULL, PREC_NONE},
+    [TOKEN_DOT] = {NULL, dot, PREC_CALL},
     [TOKEN_MINUS] = {unary, binary, PREC_TERM},
     [TOKEN_MINUS_MINUS] = {NULL, NULL, PREC_NONE},
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
@@ -494,7 +496,7 @@ ParseRule rules[] = {
 
     [TOKEN_AND] = {NULL, and_, PREC_AND},
     [TOKEN_BREAK] = {NULL, NULL, PREC_NONE},
-    [TOKEN_CLASS] = {NULL, NULL, PREC_NONE},
+    // [TOKEN_CLASS] = {NULL, NULL, PREC_NONE},
     [TOKEN_CONTINUE] = {NULL, NULL, PREC_NONE},
     [TOKEN_ELSE] = {NULL, NULL, PREC_NONE},
     [TOKEN_FALSE] = {literal, NULL, PREC_NONE},
@@ -505,7 +507,8 @@ ParseRule rules[] = {
     [TOKEN_OR] = {NULL, or_, PREC_OR},
     // [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
     [TOKEN_RETURN] = {NULL, NULL, PREC_NONE},
-    [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
+    // [TOKEN_SUPER] = {NULL, NULL, PREC_NONE},
+    [TOKEN_STRUCT] = {NULL, NULL, PREC_NONE},
     [TOKEN_THIS] = {NULL, NULL, PREC_NONE},
     [TOKEN_TRUE] = {literal, NULL, PREC_NONE},
     [TOKEN_VAR] = {NULL, NULL, PREC_NONE},
@@ -1209,11 +1212,52 @@ static void declaration_fun(CompilerContext *ctx) {
   ctx_define_variable(ctx, global);
 }
 
+#define MAX_STRUCT_FIELDS 255
+
+static void declaration_struct(CompilerContext *ctx) {
+  ctx_consume(ctx, TOKEN_IDENTIFIER, "expect struct name.");
+
+  uint8_t struct_name_constant =
+      ctx_identifier_constant(ctx, &ctx->parser.previous);
+  ctx_emit_bytes(ctx, OP_STRUCT, struct_name_constant);
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before struct body.");
+
+  Token field_names[MAX_STRUCT_FIELDS];
+  int field_count = 0;
+
+  if (!ctx_check(ctx, TOKEN_RIGHT_BRACE)) {
+    do {
+      ctx_consume(ctx, TOKEN_IDENTIFIER, "expect field name in struct body.");
+
+      for (int i = 0; i < field_count; i++) {
+        if (identifier_equals(&ctx->parser.previous, &field_names[i])) {
+          DIAGNOSTIC(ctx, "duplicate field name in struct body.",
+                     {field_names[i], "first declared here"},
+                     {ctx->parser.previous, "re-declared here"});
+        }
+      }
+
+      field_names[field_count++] = ctx->parser.previous;
+      uint8_t field_name_constant =
+          ctx_identifier_constant(ctx, &ctx->parser.previous);
+      ctx_emit_bytes(ctx, OP_STRUCT_FIELD, field_name_constant);
+
+    } while (ctx_match(ctx, TOKEN_COMMA));
+  }
+
+  ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after struct body.");
+
+  ctx_define_variable(ctx, struct_name_constant);
+}
+
 static void declaration(CompilerContext *ctx) {
   if (ctx_match(ctx, TOKEN_VAR)) {
     declaration_var(ctx);
   } else if (ctx_match(ctx, TOKEN_FUN)) {
     declaration_fun(ctx);
+  } else if (ctx_match(ctx, TOKEN_STRUCT)) {
+    declaration_struct(ctx);
   } else {
     statement(ctx);
   }
@@ -1382,6 +1426,24 @@ static void or_(CompilerContext *ctx, bool can_assign) {
 
   parse_precedence(ctx, PREC_OR);
   ctx_patch_jump(ctx, end_jump);
+}
+
+static void dot(CompilerContext *ctx, bool can_assign) {
+  (void)can_assign;
+
+  ctx_consume(ctx, TOKEN_IDENTIFIER, "expect field name after '.'.");
+  uint8_t name = ctx_identifier_constant(ctx, &ctx->parser.previous);
+
+  // [op_code, name_constant, def_id, def_id, offset]
+  // in runtime the vm will def_id and offset for field
+  // access optimization
+
+  if (can_assign && ctx_match(ctx, TOKEN_EQUAL)) {
+    expression(ctx);
+    ctx_emit_bytes(ctx, OP_SET_FIELD, name, 0, 0, 0);
+  } else {
+    ctx_emit_bytes(ctx, OP_GET_FIELD, name, 0, 0, 0);
+  }
 }
 
 static void if_(CompilerContext *ctx, bool can_assign) {

@@ -37,7 +37,7 @@ typedef enum {
 
   TOKEN_AND,
   TOKEN_BREAK,
-  TOKEN_CLASS,
+  // TOKEN_CLASS,
   TOKEN_CONTINUE,
   TOKEN_ELSE,
   TOKEN_FALSE,
@@ -48,14 +48,14 @@ typedef enum {
   TOKEN_OR,
   // TOKEN_PRINT,
   TOKEN_RETURN,
-  TOKEN_SUPER,
+  // TOKEN_SUPER,
+  TOKEN_STRUCT,
   TOKEN_THIS,
   TOKEN_TRUE,
   TOKEN_VAR,
 
   TOKEN_ERROR,
   TOKEN_EOF
-
 } TokenType;
 
 typedef struct {

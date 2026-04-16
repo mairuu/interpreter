@@ -26,6 +26,12 @@ void object_print(Object *obj) {
   case OBJECT_NATIVE:
     printf("<native fn>");
     break;
+  case OBJECT_STRUCT_DEFINITION:
+    printf("<struct %s>", ((ObjectStructDefinition *)obj)->name->chars);
+    break;
+  case OBJECT_STRUCT_INSTANCE:
+    printf("<instance of %s>", ((ObjectStructInstance *)obj)->def->name->chars);
+    break;
   }
 }
 
@@ -127,6 +133,48 @@ ObjectNative *object_native_new(Allocator *al, NavtiveFunc function) {
   return native;
 }
 
+ObjectStructDefinition *object_struct_definition_new(Allocator *al,
+                                                     ObjectString *name,
+                                                     uint32_t definition_id) {
+  ObjectStructDefinition *def =
+      OBJECT_NEW(al, ObjectStructDefinition, OBJECT_STRUCT_DEFINITION);
+  def->name = name;
+  def->definition_id = definition_id;
+  ht_init(&def->fields, al);
+  return def;
+}
+
+void object_struct_definition_free(ObjectStructDefinition **obj,
+                                   Allocator *al) {
+  if (*obj) {
+    ht_destroy(&(*obj)->fields, al);
+    al_free(al, *obj, sizeof(ObjectStructDefinition));
+    *obj = NULL;
+  }
+}
+
+static inline size_t struct_instance_size(ObjectStructDefinition *def) {
+  return sizeof(ObjectStructInstance) + sizeof(Value) * def->fields.count;
+}
+
+ObjectStructInstance *object_struct_instance_new(Allocator *al,
+                                                 ObjectStructDefinition *def) {
+  ObjectStructInstance *instance = (ObjectStructInstance *)object_new(
+      al, struct_instance_size(def), OBJECT_STRUCT_INSTANCE);
+  instance->def = def;
+  for (int i = 0; i < def->fields.count; i++) {
+    instance->fields[i] = NIL_VALUE;
+  }
+  return instance;
+}
+
+void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al) {
+  if (*obj) {
+    al_free(al, *obj, struct_instance_size((*obj)->def));
+    *obj = NULL;
+  }
+}
+
 void object_native_free(ObjectNative **obj, Allocator *al) {
   if (*obj) {
     al_free(al, *obj, sizeof(ObjectNative));
@@ -150,6 +198,12 @@ void object_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_NATIVE:
     object_native_free((ObjectNative **)obj, al);
+    break;
+  case OBJECT_STRUCT_DEFINITION:
+    object_struct_definition_free((ObjectStructDefinition **)obj, al);
+    break;
+  case OBJECT_STRUCT_INSTANCE:
+    object_struct_instance_free((ObjectStructInstance **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

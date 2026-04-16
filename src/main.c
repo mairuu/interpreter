@@ -64,8 +64,6 @@ static void run_file(VirtualMachine *vm, const char *path) {
 
 static VirtualMachine vm;
 
-// #define VERBOSE_ALLOC
-
 typedef struct {
   Allocator *inner;
   size_t allocated;
@@ -76,7 +74,7 @@ static void *_track_alloc(void *ctx, size_t size) {
   void *ptr = track_ctx->inner->alloc(track_ctx->inner, size);
   if (ptr) {
     track_ctx->allocated += size;
-#ifdef VERBOSE_ALLOC
+#ifdef DEBUG_VERBOSE_ALLOC
     printf("alloc: %p %zu bytes (total allocated: %zu)\n", ptr, size,
            track_ctx->allocated);
 #endif
@@ -91,7 +89,7 @@ static void *_track_realloc(void *ctx, void *ptr, size_t old_size,
       track_ctx->inner->realloc(track_ctx->inner, ptr, old_size, new_size);
   if (new_ptr) {
     track_ctx->allocated += new_size - old_size;
-#ifdef VERBOSE_ALLOC
+#ifdef DEBUG_VERBOSE_ALLOC
     printf("realloc: %p -> %p (old size: %zu, new size: %zu)\n", ptr, new_ptr,
            old_size, new_size);
 #endif
@@ -102,7 +100,7 @@ static void *_track_realloc(void *ctx, void *ptr, size_t old_size,
 static void _track_free(void *ctx, void *ptr, size_t size) {
   TrackAllocatorContext *track_ctx = (TrackAllocatorContext *)ctx;
   track_ctx->allocated -= size;
-#ifdef VERBOSE_ALLOC
+#ifdef DEBUG_VERBOSE_ALLOC
   printf("free : %p %zu bytes (total allocated: %zu)\n", ptr, size,
          track_ctx->allocated);
 #endif

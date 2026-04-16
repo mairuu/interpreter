@@ -136,8 +136,8 @@ static TokenType identifier_type(Scanner *s) {
   case 'c':
     if (s->current - s->start > 1) {
       switch (s->start[1]) {
-      case 'l':
-        return check_keyword(s, 2, 3, "ass", TOKEN_CLASS);
+      // case 'l':
+      //   return check_keyword(s, 2, 3, "ass", TOKEN_CLASS);
       case 'o':
         return check_keyword(s, 2, 6, "ntinue", TOKEN_CONTINUE);
       }
@@ -167,8 +167,10 @@ static TokenType identifier_type(Scanner *s) {
   //   return check_keyword(s, 1, 4, "rint", TOKEN_PRINT);
   case 'r':
     return check_keyword(s, 1, 5, "eturn", TOKEN_RETURN);
+  // case 's':
+  //   return check_keyword(s, 1, 4, "uper", TOKEN_SUPER);
   case 's':
-    return check_keyword(s, 1, 4, "uper", TOKEN_SUPER);
+    return check_keyword(s, 1, 5, "truct", TOKEN_STRUCT);
   case 't':
     if (s->current - s->start > 1) {
       switch (s->start[1]) {

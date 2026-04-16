@@ -27,3 +27,6 @@ void chunk_destroy(Chunk *chunk, Allocator *al);
 
 void chunk_load_from_proto(Chunk *chunk, const Proto *proto,
                            ConstantLoader *loader, Allocator *al);
+
+void chunk_patch_byte(Chunk *chunk, int offset, uint8_t byte);
+void chunk_patch_short(Chunk *chunk, int offset, uint16_t value);

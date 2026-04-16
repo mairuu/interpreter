@@ -13,8 +13,8 @@
 #include <stdio.h>
 #endif
 
-// #define GC_INITIAL_THRESHOLD (1024 * 1024) // 1MB
-#define GC_INITIAL_THRESHOLD (512) // debug
+#define GC_INITIAL_THRESHOLD (1024 * 1024) // 1MB
+// #define GC_INITIAL_THRESHOLD (512) // debug
 
 static void gc_mark_value(GarbageCollector *gc, Value value);
 
@@ -124,6 +124,18 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
   }
   case OBJECT_NATIVE:
     break;
+  case OBJECT_STRUCT_DEFINITION: {
+    ObjectStructDefinition *def = (ObjectStructDefinition *)obj;
+    gc_mark_object(gc, (Object *)def->name);
+    gc_mark_hash_table(gc, &def->fields);
+    break;
+  }
+  case OBJECT_STRUCT_INSTANCE: {
+    ObjectStructInstance *instance = (ObjectStructInstance *)obj;
+    gc_mark_object(gc, (Object *)instance->def);
+    gc_mark_values(gc, instance->fields, instance->def->fields.count);
+    break;
+  }
   default:
     assert(false && "unexpected object type");
   }

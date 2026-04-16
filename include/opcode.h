@@ -26,6 +26,8 @@ typedef enum {
   OP_SET_LOCAL,
   OP_GET_UPVALUE,
   OP_SET_UPVALUE,
+  OP_GET_FIELD,
+  OP_SET_FIELD,
 
   OP_JUMP_IF_FALSE,
   OP_JUMP,
@@ -36,6 +38,9 @@ typedef enum {
 
   OP_CALL,
   OP_RETURN,
+
+  OP_STRUCT,
+  OP_STRUCT_FIELD,
 
   // OP_PRINT,
 } OpCode;
