@@ -8,23 +8,23 @@
 #include <stdio.h>
 #include <string.h>
 
-static void object_function_print(ObjectFunction *function) {
+static void obj_function_print(ObjectFunction *function) {
   printf("<fn %s>", function->name ? function->name->chars : "_");
 }
 
-void object_print(Object *obj) {
+void obj_print(Object *obj) {
   switch (obj->type) {
   case OBJECT_STRING:
     printf("%s", ((ObjectString *)obj)->chars);
     break;
   case OBJECT_FUNCTION:
-    object_function_print((ObjectFunction *)obj);
+    obj_function_print((ObjectFunction *)obj);
     break;
   case OBJECT_UPVALUE:
     printf("<upvalue>");
     break;
   case OBJECT_CLOSURE:
-    object_function_print(((ObjectClosure *)obj)->function);
+    obj_function_print(((ObjectClosure *)obj)->function);
     break;
   case OBJECT_NATIVE:
     printf("<native fn>");
@@ -47,7 +47,7 @@ void object_print(Object *obj) {
   }
 }
 
-static void *object_new(Allocator *al, size_t size, ObjectType type) {
+static void *obj_new(Allocator *al, size_t size, ObjectType type) {
   Object *obj = al_alloc(al, size);
   obj->type = type;
   obj->next = NULL;
@@ -55,11 +55,10 @@ static void *object_new(Allocator *al, size_t size, ObjectType type) {
   return obj;
 }
 
-#define OBJECT_NEW(al, type, object_type)                                      \
-  (type *)object_new(al, sizeof(type), object_type)
+#define OBJECT_NEW(al, type, obj_type)                                         \
+  (type *)obj_new(al, sizeof(type), obj_type)
 
-ObjectString object_string_create(const char *chars, int length,
-                                  uint32_t hash) {
+ObjectString obj_string_create(const char *chars, int length, uint32_t hash) {
   return (ObjectString){
       .object = {.type = OBJECT_STRING},
       .is_interned = false,
@@ -69,8 +68,8 @@ ObjectString object_string_create(const char *chars, int length,
   };
 }
 
-ObjectString *object_string_new(Allocator *al, char *chars, int length,
-                                uint32_t hash) {
+ObjectString *obj_string_new(Allocator *al, char *chars, int length,
+                             uint32_t hash) {
   ObjectString *str = OBJECT_NEW(al, ObjectString, OBJECT_STRING);
   str->is_interned = false;
   str->chars = chars;
@@ -79,13 +78,13 @@ ObjectString *object_string_new(Allocator *al, char *chars, int length,
   return str;
 }
 
-void object_string_free(ObjectString **obj, Allocator *al) {
+void obj_string_free(ObjectString **obj, Allocator *al) {
   al_free(al, (*obj)->chars, (*obj)->length + 1);
   al_free(al, *obj, sizeof(ObjectString));
   *obj = NULL;
 }
 
-bool object_string_equals(ObjectString *a, ObjectString *b) {
+bool obj_string_equals(ObjectString *a, ObjectString *b) {
   if (a->is_interned && b->is_interned) {
     return a == b;
   }
@@ -94,7 +93,7 @@ bool object_string_equals(ObjectString *a, ObjectString *b) {
   return memcmp(a->chars, b->chars, a->length) == 0;
 }
 
-ObjectFunction *object_function_new(Allocator *al) {
+ObjectFunction *obj_function_new(Allocator *al) {
   ObjectFunction *func = OBJECT_NEW(al, ObjectFunction, OBJECT_FUNCTION);
   func->arity = 0;
   func->upvalue_count = 0;
@@ -103,7 +102,7 @@ ObjectFunction *object_function_new(Allocator *al) {
   return func;
 }
 
-void object_function_free(ObjectFunction **obj, Allocator *al) {
+void obj_function_free(ObjectFunction **obj, Allocator *al) {
   if (*obj) {
     chunk_destroy(&(*obj)->chunk, al);
     al_free(al, *obj, sizeof(ObjectFunction));
@@ -111,7 +110,7 @@ void object_function_free(ObjectFunction **obj, Allocator *al) {
   }
 }
 
-ObjectUpvalue *object_upvalue_new(Allocator *al, Value *location) {
+ObjectUpvalue *obj_upvalue_new(Allocator *al, Value *location) {
   ObjectUpvalue *upvalue = OBJECT_NEW(al, ObjectUpvalue, OBJECT_UPVALUE);
   upvalue->next = NULL;
   upvalue->location = location;
@@ -119,7 +118,7 @@ ObjectUpvalue *object_upvalue_new(Allocator *al, Value *location) {
   return upvalue;
 }
 
-void object_upvalue_free(ObjectUpvalue **obj, Allocator *al) {
+void obj_upvalue_free(ObjectUpvalue **obj, Allocator *al) {
   if (!*obj) {
     return;
   }
@@ -132,8 +131,8 @@ static inline size_t closure_size(int upvalue_count) {
   return sizeof(ObjectClosure) + sizeof(ObjectUpvalue *) * upvalue_count;
 }
 
-ObjectClosure *object_closure_new(Allocator *al, ObjectFunction *function) {
-  ObjectClosure *closure = (ObjectClosure *)object_new(
+ObjectClosure *obj_closure_new(Allocator *al, ObjectFunction *function) {
+  ObjectClosure *closure = (ObjectClosure *)obj_new(
       al, closure_size(function->upvalue_count), OBJECT_CLOSURE);
   closure->function = function;
   closure->upvalue_count = function->upvalue_count;
@@ -143,7 +142,7 @@ ObjectClosure *object_closure_new(Allocator *al, ObjectFunction *function) {
   return closure;
 }
 
-void object_closure_free(ObjectClosure **obj, Allocator *al) {
+void obj_closure_free(ObjectClosure **obj, Allocator *al) {
   if (!*obj) {
     return;
   }
@@ -151,22 +150,22 @@ void object_closure_free(ObjectClosure **obj, Allocator *al) {
   *obj = NULL;
 }
 
-ObjectNative *object_native_new(Allocator *al, NavtiveFunc function) {
+ObjectNative *obj_native_new(Allocator *al, NavtiveFunc function) {
   ObjectNative *native = OBJECT_NEW(al, ObjectNative, OBJECT_NATIVE);
   native->function = function;
   return native;
 }
 
-void object_native_free(ObjectNative **obj, Allocator *al) {
+void obj_native_free(ObjectNative **obj, Allocator *al) {
   if (*obj) {
     al_free(al, *obj, sizeof(ObjectNative));
     *obj = NULL;
   }
 }
 
-ObjectStructDefinition *object_struct_definition_new(Allocator *al,
-                                                     ObjectString *name,
-                                                     uint32_t definition_id) {
+ObjectStructDefinition *obj_struct_definition_new(Allocator *al,
+                                                  ObjectString *name,
+                                                  uint32_t definition_id) {
   ObjectStructDefinition *def =
       OBJECT_NEW(al, ObjectStructDefinition, OBJECT_STRUCT_DEFINITION);
   def->name = name;
@@ -175,8 +174,7 @@ ObjectStructDefinition *object_struct_definition_new(Allocator *al,
   return def;
 }
 
-void object_struct_definition_free(ObjectStructDefinition **obj,
-                                   Allocator *al) {
+void obj_struct_definition_free(ObjectStructDefinition **obj, Allocator *al) {
   if (!*obj) {
     return;
   }
@@ -190,9 +188,9 @@ static inline size_t struct_instance_size(ObjectStructDefinition *def) {
   return sizeof(ObjectStructInstance) + sizeof(Value) * def->fields.count;
 }
 
-ObjectStructInstance *object_struct_instance_new(Allocator *al,
-                                                 ObjectStructDefinition *def) {
-  ObjectStructInstance *instance = (ObjectStructInstance *)object_new(
+ObjectStructInstance *obj_struct_instance_new(Allocator *al,
+                                              ObjectStructDefinition *def) {
+  ObjectStructInstance *instance = (ObjectStructInstance *)obj_new(
       al, struct_instance_size(def), OBJECT_STRUCT_INSTANCE);
   instance->def = def;
   for (int i = 0; i < def->fields.count; i++) {
@@ -201,7 +199,7 @@ ObjectStructInstance *object_struct_instance_new(Allocator *al,
   return instance;
 }
 
-void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al) {
+void obj_struct_instance_free(ObjectStructInstance **obj, Allocator *al) {
   if (!*obj) {
     return;
   }
@@ -210,9 +208,8 @@ void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al) {
   *obj = NULL;
 }
 
-ObjectTraitDefinition *object_trait_definition_new(Allocator *al,
-                                                   ObjectString *name,
-                                                   uint32_t trait_id) {
+ObjectTraitDefinition *
+obj_trait_definition_new(Allocator *al, ObjectString *name, uint32_t trait_id) {
   ObjectTraitDefinition *trait =
       OBJECT_NEW(al, ObjectTraitDefinition, OBJECT_TRAIT_DEFINITION);
   trait->name = name;
@@ -221,7 +218,7 @@ ObjectTraitDefinition *object_trait_definition_new(Allocator *al,
   return trait;
 }
 
-void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al) {
+void obj_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al) {
   if (!*obj) {
     return;
   }
@@ -231,11 +228,11 @@ void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al) {
   *obj = NULL;
 }
 
-int object_trait_find_slot(ObjectTraitDefinition *trait,
-                           ObjectString *method_name) {
+int obj_trait_find_slot(ObjectTraitDefinition *trait,
+                        ObjectString *method_name) {
   int method_count = array_count(trait->method_names);
   for (int i = 0; i < method_count; i++) {
-    if (object_string_equals(trait->method_names[i], method_name)) {
+    if (obj_string_equals(trait->method_names[i], method_name)) {
       return i;
     }
   }
@@ -247,10 +244,9 @@ static inline size_t impl_size(ObjectTraitDefinition *trait) {
          sizeof(ObjectClosure *) * array_count(trait->method_names);
 }
 
-ObjectImpl *object_impl_new(Allocator *al, ObjectTraitDefinition *trait,
-                            ObjectStructDefinition *struct_def) {
-  ObjectImpl *impl =
-      (ObjectImpl *)object_new(al, impl_size(trait), OBJECT_IMPL);
+ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
+                         ObjectStructDefinition *struct_def) {
+  ObjectImpl *impl = (ObjectImpl *)obj_new(al, impl_size(trait), OBJECT_IMPL);
   impl->trait = trait;
   impl->struct_def = struct_def;
 
@@ -261,7 +257,7 @@ ObjectImpl *object_impl_new(Allocator *al, ObjectTraitDefinition *trait,
   return impl;
 }
 
-void object_impl_free(ObjectImpl **obj, Allocator *al) {
+void obj_impl_free(ObjectImpl **obj, Allocator *al) {
   if (!*obj) {
     return;
   }
@@ -269,34 +265,34 @@ void object_impl_free(ObjectImpl **obj, Allocator *al) {
   *obj = NULL;
 }
 
-void object_free(Object **obj, Allocator *al) {
+void obj_free(Object **obj, Allocator *al) {
   switch ((*obj)->type) {
   case OBJECT_STRING:
-    object_string_free((ObjectString **)obj, al);
+    obj_string_free((ObjectString **)obj, al);
     break;
   case OBJECT_FUNCTION:
-    object_function_free((ObjectFunction **)obj, al);
+    obj_function_free((ObjectFunction **)obj, al);
     break;
   case OBJECT_UPVALUE:
-    object_upvalue_free((ObjectUpvalue **)obj, al);
+    obj_upvalue_free((ObjectUpvalue **)obj, al);
     break;
   case OBJECT_CLOSURE:
-    object_closure_free((ObjectClosure **)obj, al);
+    obj_closure_free((ObjectClosure **)obj, al);
     break;
   case OBJECT_NATIVE:
-    object_native_free((ObjectNative **)obj, al);
+    obj_native_free((ObjectNative **)obj, al);
     break;
   case OBJECT_STRUCT_DEFINITION:
-    object_struct_definition_free((ObjectStructDefinition **)obj, al);
+    obj_struct_definition_free((ObjectStructDefinition **)obj, al);
     break;
   case OBJECT_STRUCT_INSTANCE:
-    object_struct_instance_free((ObjectStructInstance **)obj, al);
+    obj_struct_instance_free((ObjectStructInstance **)obj, al);
     break;
   case OBJECT_TRAIT_DEFINITION:
-    object_trait_definition_free((ObjectTraitDefinition **)obj, al);
+    obj_trait_definition_free((ObjectTraitDefinition **)obj, al);
     break;
   case OBJECT_IMPL:
-    object_impl_free((ObjectImpl **)obj, al);
+    obj_impl_free((ObjectImpl **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

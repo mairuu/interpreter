@@ -23,7 +23,7 @@ bool value_equals(Value a, Value b) {
   case VALUE_OBJECT:
     if (a.as.object->type == OBJECT_STRING &&
         b.as.object->type == OBJECT_STRING) {
-      return object_string_equals(AS_STRING(a), AS_STRING(b));
+      return obj_string_equals(AS_STRING(a), AS_STRING(b));
     }
     return AS_OBJECT(a) == AS_OBJECT(b);
   case VALUE_EMPTY:
@@ -46,7 +46,7 @@ void value_print(Value value) {
     printf("%g", AS_NUMBER(value));
     break;
   case VALUE_OBJECT:
-    object_print(AS_OBJECT(value));
+    obj_print(AS_OBJECT(value));
     break;
   case VALUE_EMPTY:
     printf("<empty>");

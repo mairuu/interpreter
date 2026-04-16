@@ -92,24 +92,24 @@ typedef struct ObjectImpl {
   ObjectClosure *methods[];
 } ObjectImpl;
 
-void object_print(Object *obj);
+void obj_print(Object *obj);
 
-static inline bool value_is_object_type(Value value, ObjectType type) {
+static inline bool value_is_obj_type(Value value, ObjectType type) {
   return IS_OBJECT(value) && AS_OBJECT(value)->type == type;
 }
 
-#define IS_STRING(value) value_is_object_type(value, OBJECT_STRING)
-#define IS_FUNCTION(value) value_is_object_type(value, OBJECT_FUNCTION)
-#define IS_UPVALUE(value) value_is_object_type(value, OBJECT_UPVALUE)
-#define IS_CLOSURE(value) value_is_object_type(value, OBJECT_CLOSURE)
-#define IS_NATIVE(value) value_is_object_type(value, OBJECT_NATIVE)
+#define IS_STRING(value) value_is_obj_type(value, OBJECT_STRING)
+#define IS_FUNCTION(value) value_is_obj_type(value, OBJECT_FUNCTION)
+#define IS_UPVALUE(value) value_is_obj_type(value, OBJECT_UPVALUE)
+#define IS_CLOSURE(value) value_is_obj_type(value, OBJECT_CLOSURE)
+#define IS_NATIVE(value) value_is_obj_type(value, OBJECT_NATIVE)
 #define IS_STRUCT_DEFINITION(value)                                            \
-  value_is_object_type(value, OBJECT_STRUCT_DEFINITION)
+  value_is_obj_type(value, OBJECT_STRUCT_DEFINITION)
 #define IS_STRUCT_INSTANCE(value)                                              \
-  value_is_object_type(value, OBJECT_STRUCT_INSTANCE)
+  value_is_obj_type(value, OBJECT_STRUCT_INSTANCE)
 #define IS_TRAIT_DEFINITION(value)                                             \
-  value_is_object_type(value, OBJECT_TRAIT_DEFINITION)
-#define IS_IMPL(value) value_is_object_type(value, OBJECT_IMPL)
+  value_is_obj_type(value, OBJECT_TRAIT_DEFINITION)
+#define IS_IMPL(value) value_is_obj_type(value, OBJECT_IMPL)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
@@ -122,44 +122,43 @@ static inline bool value_is_object_type(Value value, ObjectType type) {
 #define AS_IMPL(value) ((ObjectImpl *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
-void object_free(Object **obj, Allocator *al);
+void obj_free(Object **obj, Allocator *al);
 
 // for temporary strings, used for hashing and lookup, not heap allocated
-ObjectString object_string_create(const char *chars, int length, uint32_t hash);
+ObjectString obj_string_create(const char *chars, int length, uint32_t hash);
 // takes ownership of chars
-ObjectString *object_string_new(Allocator *al, char *chars, int length,
-                                uint32_t hash);
-void object_string_free(ObjectString **obj, Allocator *al);
-bool object_string_equals(ObjectString *a, ObjectString *b);
+ObjectString *obj_string_new(Allocator *al, char *chars, int length,
+                             uint32_t hash);
+void obj_string_free(ObjectString **obj, Allocator *al);
+bool obj_string_equals(ObjectString *a, ObjectString *b);
 
-ObjectFunction *object_function_new(Allocator *al);
-void object_function_free(ObjectFunction **obj, Allocator *al);
+ObjectFunction *obj_function_new(Allocator *al);
+void obj_function_free(ObjectFunction **obj, Allocator *al);
 
-ObjectUpvalue *object_upvalue_new(Allocator *al, Value *location);
-void object_upvalue_free(ObjectUpvalue **obj, Allocator *al);
+ObjectUpvalue *obj_upvalue_new(Allocator *al, Value *location);
+void obj_upvalue_free(ObjectUpvalue **obj, Allocator *al);
 
-ObjectClosure *object_closure_new(Allocator *al, ObjectFunction *function);
-void object_closure_free(ObjectClosure **obj, Allocator *al);
+ObjectClosure *obj_closure_new(Allocator *al, ObjectFunction *function);
+void obj_closure_free(ObjectClosure **obj, Allocator *al);
 
-ObjectNative *object_native_new(Allocator *al, NavtiveFunc function);
-void object_native_free(ObjectNative **obj, Allocator *al);
+ObjectNative *obj_native_new(Allocator *al, NavtiveFunc function);
+void obj_native_free(ObjectNative **obj, Allocator *al);
 
-ObjectStructDefinition *object_struct_definition_new(Allocator *al,
-                                                     ObjectString *name,
-                                                     uint32_t definition_id);
-void object_struct_definition_free(ObjectStructDefinition **obj, Allocator *al);
+ObjectStructDefinition *obj_struct_definition_new(Allocator *al,
+                                                  ObjectString *name,
+                                                  uint32_t definition_id);
+void obj_struct_definition_free(ObjectStructDefinition **obj, Allocator *al);
 
-ObjectStructInstance *object_struct_instance_new(Allocator *al,
-                                                 ObjectStructDefinition *def);
-void object_struct_instance_free(ObjectStructInstance **obj, Allocator *al);
+ObjectStructInstance *obj_struct_instance_new(Allocator *al,
+                                              ObjectStructDefinition *def);
+void obj_struct_instance_free(ObjectStructInstance **obj, Allocator *al);
 
-ObjectTraitDefinition *object_trait_definition_new(Allocator *al,
-                                                   ObjectString *name,
-                                                   uint32_t trait_id);
-void object_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al);
-int object_trait_find_slot(ObjectTraitDefinition *trait,
-                           ObjectString *method_name);
+ObjectTraitDefinition *
+obj_trait_definition_new(Allocator *al, ObjectString *name, uint32_t trait_id);
+void obj_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al);
+int obj_trait_find_slot(ObjectTraitDefinition *trait,
+                        ObjectString *method_name);
 
-ObjectImpl *object_impl_new(Allocator *al, ObjectTraitDefinition *trait,
-                            ObjectStructDefinition *struct_def);
-void object_impl_free(ObjectImpl **obj, Allocator *al);
+ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
+                         ObjectStructDefinition *struct_def);
+void obj_impl_free(ObjectImpl **obj, Allocator *al);

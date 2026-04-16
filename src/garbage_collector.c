@@ -45,7 +45,7 @@ void gc_mark_object(GarbageCollector *gc, Object *obj) {
 
 #ifdef DEBUG_LOG_GC
   printf("%p mark ", (void *)obj);
-  object_print(obj);
+  obj_print(obj);
   printf("\n");
 #endif
 
@@ -95,7 +95,7 @@ static void gc_mark_roots(GarbageCollector *gc) {
 static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
 #ifdef DEBUG_LOG_GC
   printf("%p blacken ", (void *)obj);
-  object_print(obj);
+  obj_print(obj);
   printf("\n");
 #endif
 
@@ -181,7 +181,7 @@ static void gc_sweep(GarbageCollector *gc) {
     } else {
       gc->vm->objects = obj;
     }
-    object_free(&unreached, &gc->as_allocator);
+    obj_free(&unreached, &gc->as_allocator);
   }
 }
 

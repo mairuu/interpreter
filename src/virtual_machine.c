@@ -40,32 +40,32 @@ static void vm_track_object(VirtualMachine *vm, Object *object) {
 
 static ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
                                    uint32_t hash) {
-  ObjectString *string = object_string_new(&vm->al, chars, length, hash);
+  ObjectString *string = obj_string_new(&vm->al, chars, length, hash);
   vm_track_object(vm, &string->object);
   return string;
 }
 
 static ObjectFunction *vm_new_function(VirtualMachine *vm) {
-  ObjectFunction *function = object_function_new(&vm->al);
+  ObjectFunction *function = obj_function_new(&vm->al);
   vm_track_object(vm, &function->object);
   return function;
 }
 
 static ObjectUpvalue *vm_new_upvalue(VirtualMachine *vm, Value *location) {
-  ObjectUpvalue *upvalue = object_upvalue_new(&vm->al, location);
+  ObjectUpvalue *upvalue = obj_upvalue_new(&vm->al, location);
   vm_track_object(vm, &upvalue->object);
   return upvalue;
 }
 
 static ObjectClosure *vm_new_closure(VirtualMachine *vm,
                                      ObjectFunction *function) {
-  ObjectClosure *closure = object_closure_new(&vm->al, function);
+  ObjectClosure *closure = obj_closure_new(&vm->al, function);
   vm_track_object(vm, &closure->object);
   return closure;
 }
 
 static ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
-  ObjectNative *native = object_native_new(&vm->al, function);
+  ObjectNative *native = obj_native_new(&vm->al, function);
   vm_track_object(vm, &native->object);
   return native;
 }
@@ -74,14 +74,14 @@ static ObjectStructDefinition *
 vm_new_struct_definition(VirtualMachine *vm, ObjectString *name,
                          uint16_t definition_id) {
   ObjectStructDefinition *def =
-      object_struct_definition_new(&vm->al, name, definition_id);
+      obj_struct_definition_new(&vm->al, name, definition_id);
   vm_track_object(vm, &def->object);
   return def;
 }
 
 static ObjectStructInstance *
 vm_new_struct_instance(VirtualMachine *vm, ObjectStructDefinition *def) {
-  ObjectStructInstance *instance = object_struct_instance_new(&vm->al, def);
+  ObjectStructInstance *instance = obj_struct_instance_new(&vm->al, def);
   vm_track_object(vm, &instance->obj);
   return instance;
 }
@@ -90,14 +90,14 @@ static ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
                                                       ObjectString *name,
                                                       uint16_t trait_id) {
   ObjectTraitDefinition *trait =
-      object_trait_definition_new(&vm->al, name, trait_id);
+      obj_trait_definition_new(&vm->al, name, trait_id);
   vm_track_object(vm, &trait->object);
   return trait;
 }
 
 static ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
                                ObjectStructDefinition *struct_def) {
-  ObjectImpl *impl = object_impl_new(&vm->al, trait, struct_def);
+  ObjectImpl *impl = obj_impl_new(&vm->al, trait, struct_def);
   vm_track_object(vm, &impl->object);
   return impl;
 }
@@ -122,7 +122,7 @@ static ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
                                       int length) {
   uint32_t hash = hash_string(chars, length);
 
-  ObjectString temp_str = object_string_create(chars, length, hash);
+  ObjectString temp_str = obj_string_create(chars, length, hash);
   Value *existing = ht_get(&vm->strings, OBJECT_VALUE(&temp_str));
   if (existing != NULL) {
     return AS_STRING(*existing);
@@ -486,7 +486,7 @@ void vm_destroy(VirtualMachine *vm) {
 
   while (vm->objects) {
     Object *next = vm->objects->next;
-    object_free(&vm->objects, &vm->al);
+    obj_free(&vm->objects, &vm->al);
     vm->objects = next;
   }
 }
@@ -877,7 +877,7 @@ static bool vm_run(VirtualMachine *vm) {
       ObjectImpl *impl = AS_IMPL(vm_peek(vm, 1));
       ObjectClosure *method = AS_CLOSURE(method_val);
 
-      int slot = object_trait_find_slot(impl->trait, method->function->name);
+      int slot = obj_trait_find_slot(impl->trait, method->function->name);
       if (slot == -1) {
         vm_runtime_error(vm, "method '%s' not found in trait '%s'",
                          method->function->name->chars,
