@@ -8,52 +8,58 @@
 #include <stdio.h>
 #include <string.h>
 
-static void obj_function_print(ObjectFunction *function) {
-  printf("<fn %s>", function->name ? function->name->chars : "_");
-}
-
-void obj_print(Object *obj) {
+int obj_print(char *buf, size_t size, Object *obj) {
   switch (obj->type) {
   case OBJECT_STRING:
-    printf("%s", ((ObjectString *)obj)->chars);
-    break;
+    return snprintf(buf, size, "%s", ((ObjectString *)obj)->chars);
   case OBJECT_FUNCTION:
-    obj_function_print((ObjectFunction *)obj);
+    return snprintf(buf, size, "<fn %s>",
+                    ((ObjectFunction *)obj)->name
+                        ? ((ObjectFunction *)obj)->name->chars
+                        : "_");
     break;
   case OBJECT_UPVALUE:
-    printf("<upvalue>");
+    return snprintf(buf, size, "<upvalue>");
     break;
   case OBJECT_CLOSURE:
-    obj_function_print(((ObjectClosure *)obj)->function);
+    return snprintf(buf, size, "<fn %s>",
+                    ((ObjectFunction *)obj)->name
+                        ? ((ObjectFunction *)obj)->name->chars
+                        : "_");
     break;
   case OBJECT_NATIVE:
-    printf("<native fn>");
+    return snprintf(buf, size, "<native fn>");
     break;
   case OBJECT_STRUCT_DEFINITION:
-    printf("<struct %s>", ((ObjectStructDefinition *)obj)->name->chars);
+    return snprintf(buf, size, "<struct %s>",
+                    ((ObjectStructDefinition *)obj)->name->chars);
     break;
   case OBJECT_STRUCT_INSTANCE:
-    printf("<instance of %s>", ((ObjectStructInstance *)obj)->def->name->chars);
+    return snprintf(buf, size, "<instance of %s>",
+                    ((ObjectStructInstance *)obj)->def->name->chars);
     break;
   case OBJECT_TRAIT_DEFINITION:
-    printf("<trait %s>", ((ObjectTraitDefinition *)obj)->name->chars);
+    return snprintf(buf, size, "<trait %s>",
+                    ((ObjectTraitDefinition *)obj)->name->chars);
     break;
   case OBJECT_IMPL:
-    printf("<impl of %s for %s>", ((ObjectImpl *)obj)->trait->name->chars,
-           ((ObjectImpl *)obj)->struct_def->name->chars);
+    return snprintf(buf, size, "<impl of %s for %s>",
+                    ((ObjectImpl *)obj)->trait->name->chars,
+                    ((ObjectImpl *)obj)->struct_def->name->chars);
     break;
   case OBJECT_TRAIT_OBJECT:
-    printf("<trait object of %s for %s>",
-           ((ObjectTraitObject *)obj)->impl->trait->name->chars,
-           ((ObjectTraitObject *)obj)->impl->struct_def->name->chars);
+    return snprintf(buf, size, "<trait object of %s for %s>",
+                    ((ObjectTraitObject *)obj)->impl->trait->name->chars,
+                    ((ObjectTraitObject *)obj)->impl->struct_def->name->chars);
     break;
   case OBJECT_BOUND_METHOD:
-    printf("<bound method of %s>",
-           ((ObjectBoundMethod *)obj)->method->function->name->chars);
+    return snprintf(buf, size, "<bound method of %s>",
+                    ((ObjectBoundMethod *)obj)->method->function->name->chars);
     break;
   default:
     assert(false && "unknown object type");
   }
+  return -1;
 }
 
 static void *obj_new(Allocator *al, size_t size, ObjectType type) {

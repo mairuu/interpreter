@@ -4,6 +4,7 @@
 #include "memory.h"
 #include "object.h"
 #include "value.h"
+#include <setjmp.h>
 
 #define STACK_MAX 256
 #define FRAMES_MAX 64
@@ -40,7 +41,9 @@ typedef struct VirtualMachine {
   ObjectString *type_object;
   ObjectString *type_empty;
 
-  bool in_panic;
+  jmp_buf panic_jump;
+  char panic_message[256];
+
   Allocator al;
 } VirtualMachine;
 

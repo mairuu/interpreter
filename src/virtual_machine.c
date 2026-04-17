@@ -11,6 +11,7 @@
 
 #include <assert.h>
 #include <complex.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,7 +19,7 @@
 #include <string.h>
 #include <time.h>
 
-#ifdef DEBUG_PRINT_CODE
+#if defined(DEBUG_TRACE_EXECUTION) || defined(DEBUG_PRINT_CODE)
 #include "debug.h"
 #endif
 
@@ -250,28 +251,32 @@ static inline Value vm_peek(VirtualMachine *vm, int distance) {
   return vm->stack.top[-1 - distance];
 }
 
-static void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
-  // todo: raise a panic with helper
-  vm->in_panic = true;
-
-  va_list args;
-  va_start(args, format);
-  vfprintf(stderr, format, args);
-  va_end(args);
-  fputs("\n", stderr);
-
-  // print a stack trace.
+static void vm_print_stack_trace(VirtualMachine *vm) {
+  fprintf(stderr, "stack trace (most recent call last):\n");
   for (int i = vm->frame_count - 1; i >= 0; i--) {
     CallFrame *frame = &vm->frames[i];
-    ObjectFunction *function = frame->function;
-    size_t instruction = frame->ip - function->chunk.instructions - 1;
-    fprintf(stderr, "[line %d] in ", function->chunk.lines[instruction]);
-    if (function->name == NULL) {
-      fprintf(stderr, "script\n");
+    ObjectFunction *fn = frame->function;
+    size_t instruction = frame->ip - fn->chunk.instructions - 1;
+    int line = fn->chunk.lines[instruction];
+
+    fprintf(stderr, "  [line %d] in ", line);
+    if (fn->name == NULL) {
+      fprintf(stderr, "<script>\n");
     } else {
-      fprintf(stderr, "%s()\n", function->name->chars);
+      fprintf(stderr, "%s()\n", fn->name->chars);
     }
   }
+}
+
+static void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  vsnprintf(vm->panic_message, sizeof(vm->panic_message), format, args);
+  va_end(args);
+
+  vm_print_stack_trace(vm);
+
+  longjmp(vm->panic_jump, 1);
 }
 
 static void vm_concatenate(VirtualMachine *vm) {
@@ -451,8 +456,9 @@ static Value native_clock(VirtualMachine *vm, int arg_count, Value *args) {
 
 static Value native_print(VirtualMachine *vm, int arg_count, Value *args) {
   (void)vm;
+  static char buf[1024];
   for (int i = 0; i < arg_count; i++) {
-    value_print(args[i]);
+    value_print(buf, sizeof(buf), args[i]);
     if (i < arg_count - 1) {
       printf(" ");
     }
@@ -560,12 +566,25 @@ static Value native_str(VirtualMachine *vm, int arg_count, Value *args) {
   return OBJECT_VALUE(string);
 }
 
+static Value native_panic(VirtualMachine *vm, int arg_count, Value *args) {
+  static char buf[1024];
+  int offset = 0;
+  for (int i = 0; i < arg_count && offset < (int)sizeof(buf) - 1; i++) {
+    if (i > 0) {
+      offset += snprintf(buf + offset, sizeof(buf) - offset, " ");
+    }
+    offset += value_print(buf + offset, sizeof(buf) - offset, args[i]);
+  }
+  vm_runtime_error(vm, "%s", buf);
+  return NIL_VALUE;
+}
+
 static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
   (void)vm;
   (void)arg_count;
   (void)args;
 
-  char buf[1024];
+  static char buf[1024];
 
   if (fgets(buf, sizeof(buf), stdin) == NULL) {
     return NIL_VALUE;
@@ -583,7 +602,6 @@ static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
 void vm_init(VirtualMachine *vm, Allocator al) {
   vm_reset_stack(vm);
 
-  vm->in_panic = false;
   vm->al = al;
   vm->objects = NULL;
 
@@ -605,6 +623,7 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   vm_define_native(vm, "number", native_number);
   vm_define_native(vm, "str", native_str);
   vm_define_native(vm, "readline", native_readline);
+  vm_define_native(vm, "panic", native_panic);
 }
 
 void vm_destroy(VirtualMachine *vm) {
@@ -618,16 +637,6 @@ void vm_destroy(VirtualMachine *vm) {
     obj_free(&vm->objects, &vm->al);
     vm->objects = next;
   }
-}
-
-// recover from panic if needed, return true if recovered, false otherwise
-static bool vm_recover_from_panic(VirtualMachine *vm) {
-  if (!vm->in_panic) {
-    return false;
-  }
-  vm->in_panic = false;
-  vm_reset_stack(vm);
-  return true;
 }
 
 // create or reuse an upvalue for the given local variable
@@ -799,10 +808,6 @@ static bool vm_run(VirtualMachine *vm) {
         &frame->function->chunk,
         (size_t)(ip - frame->function->chunk.instructions));
 #endif
-    if (vm_recover_from_panic(vm)) {
-      return false;
-    }
-
     uint8_t instruction = READ_BYTE();
 
     switch (instruction) {
@@ -1220,8 +1225,11 @@ InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
     return INTERPRET_COMPILE_ERROR;
   }
 
-  // reset vm state
-  vm_reset_stack(vm);
+  if (setjmp(vm->panic_jump)) {
+    vm_reset_stack(vm);
+    fprintf(stderr, "panic: %s\n", vm->panic_message);
+    return INTERPRET_RUNTIME_ERROR;
+  }
 
   ObjectFunction *function = vm_load_proto(vm, proto);
   return vm_execute_script(vm, function);

@@ -18,10 +18,14 @@ fun simulate(u: Updatable, iteration) {
   }
 }
 
-simulate(Point(0, 1), 10) // auto cast
-simulate(Point(0, 1) as Updatable, 10) // already at right trait
-simulate(Point(0, 1) as Describable, 10) // wrong trait re-cast
 
-struct Person { name }
+(fun () {
+  simulate(Point(0, 1), 1) // auto cast
 
-var bad = Person("") as Updatable // bad, raise panic
+  var d =  Point(0, 1) as Describable
+  d.describe()
+
+  struct Person { name }
+
+  var bad = Person("") as Updatable // bad, raise panic
+})()

@@ -34,24 +34,20 @@ bool value_equals(Value a, Value b) {
   return false; // unreachable
 }
 
-void value_print(Value value) {
+int value_print(char *buf, size_t size, Value value) {
   switch (value.type) {
   case VALUE_NIL:
-    printf("nil");
-    break;
+    return snprintf(buf, size, "nil");
   case VALUE_BOOL:
-    printf(AS_BOOL(value) ? "true" : "false");
-    break;
+    return snprintf(buf, size, "%s", AS_BOOL(value) ? "true" : "false");
   case VALUE_NUMBER:
-    printf("%g", AS_NUMBER(value));
-    break;
+    return snprintf(buf, size, "%g", AS_NUMBER(value));
   case VALUE_OBJECT:
-    obj_print(AS_OBJECT(value));
-    break;
+    return obj_print(buf, size, AS_OBJECT(value));
   case VALUE_EMPTY:
-    printf("<empty>");
-    break;
+    return snprintf(buf, size, "<empty>");
   default:
     assert(false && "invalid value type");
   }
+  return -1;
 }

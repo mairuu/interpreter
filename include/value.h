@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
@@ -42,4 +43,4 @@ typedef struct {
 bool value_is_falsey(Value value);
 bool value_equals(Value a, Value b);
 
-void value_print(Value value);
+int value_print(char *buf, size_t size, Value value);

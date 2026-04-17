@@ -109,7 +109,7 @@ typedef struct {
   ObjectClosure *method;
 } ObjectBoundMethod;
 
-void obj_print(Object *obj);
+int obj_print(char *buf, size_t size, Object *obj);
 
 static inline bool value_is_obj_type(Value value, ObjectType type) {
   return IS_OBJECT(value) && AS_OBJECT(value)->type == type;

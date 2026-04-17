@@ -7,6 +7,12 @@
 #include "object.h"
 #include "opcode.h"
 
+static void print_val(Value value) {
+  char buf[1024];
+  value_print(buf, sizeof(buf), value);
+  printf("%s", buf);
+}
+
 static int simple_instruction(const char *name, int offset) {
   printf("%-16s\n", name);
   return offset + 1;
@@ -16,7 +22,7 @@ static int constant_instruction(const char *name, Chunk *chunk, int offset) {
   uint8_t constant_index = chunk->instructions[offset + 1];
   printf("%-16s %d '", name, constant_index);
   Value constant = chunk->constants[constant_index];
-  value_print(constant);
+  print_val(constant);
   printf("'\n");
   return offset + 2;
 }
@@ -46,7 +52,7 @@ static int field_instruction(const char *name, Chunk *chunk, int offset) {
   // printf("%-16s %d %d %d\n", name, name_constant, def_id, offset_val);
   printf("%-16s %d ", name, name_constant);
   Value constant = chunk->constants[name_constant];
-  value_print(constant);
+  print_val(constant);
   printf(" %d %d\n", def_id, offset_val);
   return offset + 5;
 }
@@ -62,7 +68,7 @@ static int trait_method_instruction(const char *name, Chunk *chunk,
   uint8_t arg_count = chunk->instructions[offset + 5];
   printf("%-16s %d ", name, name_constant);
   Value constant = chunk->constants[name_constant];
-  value_print(constant);
+  print_val(constant);
   printf(" %d %d %d\n", trait_id, slot, arg_count);
   return offset + 6;
 }
@@ -154,7 +160,7 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     offset++;
     uint8_t constant_index = chunk->instructions[offset++];
     printf("%-16s %d '", "OP_CLOSURE", constant_index);
-    value_print(chunk->constants[constant_index]);
+    print_val(chunk->constants[constant_index]);
     printf("'\n");
 
     ObjectFunction *function = AS_FUNCTION(chunk->constants[constant_index]);
