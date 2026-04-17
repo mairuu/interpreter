@@ -2,6 +2,7 @@
 
 #include <assert.h>
 
+#include "builtins.h"
 #include "dynamic_array.h"
 #include "hash_table.h"
 #include "memory.h"
@@ -72,16 +73,18 @@ static void gc_mark_values(GarbageCollector *gc, Value *values, int count) {
   }
 }
 
+static void builtins_gc_visit(BuiltinRegistry *reg, GarbageCollector *gc) {
+  const ObjectString *type_names[] = {reg->type_nil, reg->type_bool,
+                                      reg->type_number, reg->type_object,
+                                      reg->type_empty};
+  for (size_t i = 0; i < sizeof(type_names) / sizeof(type_names[0]); i++) {
+    gc_mark_object(gc, (Object *)type_names[i]);
+  }
+}
+
 static void gc_mark_roots(GarbageCollector *gc) {
   for (Value *slot = gc->vm->stack.values; slot < gc->vm->stack.top; slot++) {
     gc_mark_value(gc, *slot);
-  }
-
-  const ObjectString *type_names[] = {gc->vm->type_nil, gc->vm->type_bool,
-                                      gc->vm->type_number, gc->vm->type_object,
-                                      gc->vm->type_empty};
-  for (size_t i = 0; i < sizeof(type_names) / sizeof(type_names[0]); i++) {
-    gc_mark_object(gc, (Object *)type_names[i]);
   }
 
   // frame already on stack no need to mark them here
@@ -96,6 +99,7 @@ static void gc_mark_roots(GarbageCollector *gc) {
   }
 
   gc_mark_hash_table(gc, &gc->vm->globals);
+  builtins_gc_visit(&gc->vm->builtins, gc);
 }
 
 static void gc_blacken_object(GarbageCollector *gc, Object *obj) {

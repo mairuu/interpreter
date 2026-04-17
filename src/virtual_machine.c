@@ -1,5 +1,6 @@
 #include "virtual_machine.h"
 
+#include "builtins.h"
 #include "chunk.h"
 #include "compiler.h"
 #include "dynamic_array.h"
@@ -45,73 +46,72 @@ static void vm_track_object(VirtualMachine *vm, Object *object) {
   vm->objects = object;
 }
 
-static ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
-                                   uint32_t hash) {
+ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
+                            uint32_t hash) {
   ObjectString *string = obj_string_new(&vm->al, chars, length, hash);
   vm_track_object(vm, &string->object);
   return string;
 }
 
-static ObjectFunction *vm_new_function(VirtualMachine *vm, int arity) {
+ObjectFunction *vm_new_function(VirtualMachine *vm, int arity) {
   ObjectFunction *function = obj_function_new(&vm->al, arity);
   vm_track_object(vm, &function->object);
   return function;
 }
 
-static ObjectUpvalue *vm_new_upvalue(VirtualMachine *vm, Value *location) {
+ObjectUpvalue *vm_new_upvalue(VirtualMachine *vm, Value *location) {
   ObjectUpvalue *upvalue = obj_upvalue_new(&vm->al, location);
   vm_track_object(vm, &upvalue->object);
   return upvalue;
 }
 
-static ObjectClosure *vm_new_closure(VirtualMachine *vm,
-                                     ObjectFunction *function) {
+ObjectClosure *vm_new_closure(VirtualMachine *vm, ObjectFunction *function) {
   ObjectClosure *closure = obj_closure_new(&vm->al, function);
   vm_track_object(vm, &closure->object);
   return closure;
 }
 
-static ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
+ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
   ObjectNative *native = obj_native_new(&vm->al, function);
   vm_track_object(vm, &native->object);
   return native;
 }
 
-static ObjectStructDefinition *
-vm_new_struct_definition(VirtualMachine *vm, ObjectString *name,
-                         uint16_t definition_id) {
+ObjectStructDefinition *vm_new_struct_definition(VirtualMachine *vm,
+                                                 ObjectString *name,
+                                                 uint16_t definition_id) {
   ObjectStructDefinition *def =
       obj_struct_definition_new(&vm->al, name, definition_id);
   vm_track_object(vm, &def->object);
   return def;
 }
 
-static ObjectStructInstance *
-vm_new_struct_instance(VirtualMachine *vm, ObjectStructDefinition *def) {
+ObjectStructInstance *vm_new_struct_instance(VirtualMachine *vm,
+                                             ObjectStructDefinition *def) {
   ObjectStructInstance *instance = obj_struct_instance_new(&vm->al, def);
   vm_track_object(vm, &instance->obj);
   return instance;
 }
 
-static ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
-                                                      ObjectString *name,
-                                                      uint16_t trait_id) {
+ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
+                                               ObjectString *name,
+                                               uint16_t trait_id) {
   ObjectTraitDefinition *trait =
       obj_trait_definition_new(&vm->al, name, trait_id);
   vm_track_object(vm, &trait->object);
   return trait;
 }
 
-static ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
-                               ObjectStructDefinition *struct_def) {
+ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
+                        ObjectStructDefinition *struct_def) {
   ObjectImpl *impl = obj_impl_new(&vm->al, trait, struct_def);
   vm_track_object(vm, &impl->object);
   return impl;
 }
 
-static ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
-                                              ObjectStructInstance *instance,
-                                              ObjectImpl *impl) {
+ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
+                                       ObjectStructInstance *instance,
+                                       ObjectImpl *impl) {
   ObjectTraitObject *trait_object =
       obj_trait_object_new(&vm->al, instance, impl);
   vm_track_object(vm, &trait_object->object);
@@ -144,8 +144,8 @@ static char *copy_string(const char *str, int length, Allocator *al) {
   return copy;
 }
 
-static ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
-                                      int length) {
+ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
+                               int length) {
   uint32_t hash = hash_string(chars, length);
 
   ObjectString temp_str = obj_string_create(chars, length, hash);
@@ -169,8 +169,8 @@ static ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
   return string;
 }
 
-static void vm_define_native(VirtualMachine *vm, const char *name,
-                             NavtiveFunc function) {
+void vm_define_native(VirtualMachine *vm, const char *name,
+                      NavtiveFunc function) {
   Value string = OBJECT_VALUE(vm_intern_string(vm, name, strlen(name)));
   vm_push(vm, string);
   Value native = OBJECT_VALUE(vm_new_native(vm, function));
@@ -274,14 +274,13 @@ static void vm_print_stack_trace(VirtualMachine *vm) {
   }
 }
 
-static void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
+void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
   va_list args;
   va_start(args, format);
   vsnprintf(vm->panic_message, sizeof(vm->panic_message), format, args);
   va_end(args);
 
   vm_print_stack_trace(vm);
-  assert(false);
 
   longjmp(vm->panic_jump, 1);
 }
@@ -451,161 +450,6 @@ static bool vm_call_value(VirtualMachine *vm, Value callee, int arg_count) {
   return false;
 }
 
-static Value native_clock(VirtualMachine *vm, int arg_count, Value *args) {
-  (void)vm;
-  (void)args;
-  if (arg_count != 0) {
-    vm_runtime_error(vm, "clock() takes no arguments");
-    return NIL_VALUE;
-  }
-  return NUMBER_VALUE((double)clock() / CLOCKS_PER_SEC);
-}
-
-static Value native_print(VirtualMachine *vm, int arg_count, Value *args) {
-  (void)vm;
-  static char buf[1024];
-  for (int i = 0; i < arg_count; i++) {
-    value_print(buf, sizeof(buf), args[i]);
-    if (i < arg_count - 1) {
-      printf(" ");
-    }
-  }
-  return NIL_VALUE;
-}
-
-static Value native_println(VirtualMachine *vm, int arg_count, Value *args) {
-  native_print(vm, arg_count, args);
-  printf("\n");
-  return NIL_VALUE;
-}
-
-static Value native_type(VirtualMachine *vm, int arg_count, Value *args) {
-  (void)vm;
-  if (arg_count != 1) {
-    vm_runtime_error(vm, "type() takes exactly one argument");
-    return NIL_VALUE;
-  }
-
-  switch (args[0].type) {
-  case VALUE_NIL:
-    return OBJECT_VALUE(vm->type_nil);
-  case VALUE_BOOL:
-    return OBJECT_VALUE(vm->type_bool);
-  case VALUE_NUMBER:
-    return OBJECT_VALUE(vm->type_number);
-  case VALUE_OBJECT:
-    return OBJECT_VALUE(vm->type_object);
-  case VALUE_EMPTY:
-    return OBJECT_VALUE(vm->type_empty);
-    break;
-  }
-
-  return NIL_VALUE;
-}
-
-static Value native_number(VirtualMachine *vm, int arg_count, Value *args) {
-  (void)vm;
-  if (arg_count != 1) {
-    vm_runtime_error(vm, "number() takes exactly one argument");
-    return NIL_VALUE;
-  }
-
-  Value arg = args[0];
-  switch (arg.type) {
-  case VALUE_BOOL:
-    return NUMBER_VALUE(arg.as.boolean ? 1 : 0);
-  case VALUE_NUMBER:
-    return arg;
-  case VALUE_NIL:
-    return NIL_VALUE;
-  case VALUE_OBJECT:
-    if (IS_STRING(arg)) {
-      char *endptr;
-      double num = strtod(AS_STRING(arg)->chars, &endptr);
-      if (*endptr == '\0') {
-        return NUMBER_VALUE(num);
-      }
-    }
-    break;
-  case VALUE_EMPTY:
-    return NIL_VALUE;
-  }
-
-  return NIL_VALUE;
-}
-
-// strigify a value
-static Value native_str(VirtualMachine *vm, int arg_count, Value *args) {
-  (void)vm;
-  if (arg_count != 1) {
-    vm_runtime_error(vm, "str() takes exactly one argument");
-    return NIL_VALUE;
-  }
-
-  char buf[64];
-  buf[0] = '\0';
-
-  Value arg = args[0];
-  switch (arg.type) {
-  case VALUE_BOOL:
-    snprintf(buf, sizeof(buf), "%s", AS_BOOL(arg) ? "true" : "false");
-    break;
-  case VALUE_NUMBER:
-    snprintf(buf, sizeof(buf), "%g", AS_NUMBER(arg));
-    break;
-  case VALUE_NIL:
-    return OBJECT_VALUE(vm->type_nil);
-  case VALUE_OBJECT:
-    if (IS_STRING(arg)) {
-      return arg;
-    }
-    break;
-  case VALUE_EMPTY:
-    break;
-  }
-
-  int len = strlen(buf);
-
-  hash_string(buf, len);
-  char *copy = copy_string(buf, len, &vm->al);
-  ObjectString *string = vm_new_string(vm, copy, len, hash_string(copy, len));
-
-  return OBJECT_VALUE(string);
-}
-
-static Value native_panic(VirtualMachine *vm, int arg_count, Value *args) {
-  static char buf[1024];
-  int offset = 0;
-  for (int i = 0; i < arg_count && offset < (int)sizeof(buf) - 1; i++) {
-    if (i > 0) {
-      offset += snprintf(buf + offset, sizeof(buf) - offset, " ");
-    }
-    offset += value_print(buf + offset, sizeof(buf) - offset, args[i]);
-  }
-  vm_runtime_error(vm, "%s", buf);
-  return NIL_VALUE;
-}
-
-static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
-  (void)vm;
-  (void)arg_count;
-  (void)args;
-
-  static char buf[1024];
-
-  if (fgets(buf, sizeof(buf), stdin) == NULL) {
-    return NIL_VALUE;
-  }
-
-  int length = strlen(buf);
-  buf[length - 1] = '\0';
-  length--;
-  char *copy = copy_string(buf, length, &vm->al);
-  ObjectString *string =
-      vm_new_string(vm, copy, length, hash_string(copy, length));
-  return OBJECT_VALUE(string);
-}
-
 void vm_init(VirtualMachine *vm, Allocator al) {
   vm_reset_stack(vm);
 
@@ -617,24 +461,14 @@ void vm_init(VirtualMachine *vm, Allocator al) {
 
   vm->open_upvalues = NULL;
 
-  vm->type_bool = vm_intern_string(vm, "bool", 4);
-  vm->type_nil = vm_intern_string(vm, "nil", 3);
-  vm->type_number = vm_intern_string(vm, "number", 6);
-  vm->type_object = vm_intern_string(vm, "object", 6);
-  vm->type_empty = vm_intern_string(vm, "empty", 5);
-
-  vm_define_native(vm, "clock", native_clock);
-  vm_define_native(vm, "print", native_print);
-  vm_define_native(vm, "println", native_println);
-  vm_define_native(vm, "type", native_type);
-  vm_define_native(vm, "number", native_number);
-  vm_define_native(vm, "str", native_str);
-  vm_define_native(vm, "readline", native_readline);
-  vm_define_native(vm, "panic", native_panic);
+  builtins_init(&vm->builtins, vm);
+  builtins_register(&vm->builtins, vm);
 }
 
 void vm_destroy(VirtualMachine *vm) {
   vm_reset_stack(vm);
+
+  builtins_destroy(&vm->builtins, &vm->al);
 
   ht_destroy(&vm->globals, &vm->al);
   ht_destroy(&vm->strings, &vm->al);
