@@ -23,8 +23,8 @@ int obj_print(char *buf, size_t size, Object *obj) {
     break;
   case OBJECT_CLOSURE:
     return snprintf(buf, size, "<fn %s>",
-                    ((ObjectFunction *)obj)->name
-                        ? ((ObjectFunction *)obj)->name->chars
+                    ((ObjectClosure *)obj)->function->name
+                        ? ((ObjectClosure *)obj)->function->name->chars
                         : "_");
     break;
   case OBJECT_NATIVE:

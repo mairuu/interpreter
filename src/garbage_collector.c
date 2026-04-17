@@ -11,6 +11,12 @@
 
 #ifdef DEBUG_LOG_GC
 #include <stdio.h>
+
+static void print_obj(Object *obj) {
+  static char buf[256];
+  obj_print(buf, sizeof(buf), obj);
+  printf("%s", buf);
+}
 #endif
 
 #define GC_INITIAL_THRESHOLD (1024 * 1024) // 1MB
@@ -45,7 +51,7 @@ void gc_mark_object(GarbageCollector *gc, Object *obj) {
 
 #ifdef DEBUG_LOG_GC
   printf("%p mark ", (void *)obj);
-  obj_print(obj);
+  print_obj(obj);
   printf("\n");
 #endif
 
@@ -95,7 +101,7 @@ static void gc_mark_roots(GarbageCollector *gc) {
 static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
 #ifdef DEBUG_LOG_GC
   printf("%p blacken ", (void *)obj);
-  obj_print(obj);
+  print_obj(obj);
   printf("\n");
 #endif
 
@@ -156,6 +162,10 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     ObjectImpl *impl = (ObjectImpl *)obj;
     gc_mark_object(gc, (Object *)impl->trait);
     gc_mark_object(gc, (Object *)impl->struct_def);
+    size_t method_count = array_count(impl->trait->method_names);
+    for (size_t i = 0; i < method_count; i++) {
+      gc_mark_object(gc, (Object *)impl->methods[i]);
+    }
     break;
   }
   case OBJECT_TRAIT_OBJECT: {

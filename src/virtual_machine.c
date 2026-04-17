@@ -21,6 +21,12 @@
 
 #if defined(DEBUG_TRACE_EXECUTION) || defined(DEBUG_PRINT_CODE)
 #include "debug.h"
+
+static void print_val(Value value) {
+  static char buf[256];
+  value_print(buf, sizeof(buf), value);
+  printf("%s", buf);
+}
 #endif
 
 static inline void vm_push(VirtualMachine *vm, Value value);
@@ -275,6 +281,7 @@ static void vm_runtime_error(VirtualMachine *vm, const char *format, ...) {
   va_end(args);
 
   vm_print_stack_trace(vm);
+  assert(false);
 
   longjmp(vm->panic_jump, 1);
 }
@@ -799,7 +806,7 @@ static bool vm_run(VirtualMachine *vm) {
     printf("          ");
     for (Value *slot = vm->stack.values; slot < vm->stack.top; slot++) {
       printf("[ ");
-      value_print(*slot);
+      print_val(*slot);
       printf(" %c", frame->base == slot ? '=' : ']');
     }
     printf("\n");
