@@ -31,7 +31,7 @@ typedef struct RawConstant {
 #define RAW_FUNC_VALUE(p) ((RawConstant){.type = RAW_FUNC, .as.proto = (p)})
 
 // type of function prototypes.
-typedef enum { PROTO_SCRIPT, PROTO_FUNCTION } ProtoType;
+typedef enum { PROTO_SCRIPT, PROTO_FUNCTION, PROTO_METHOD } ProtoType;
 
 // function prototype.
 typedef struct Proto {

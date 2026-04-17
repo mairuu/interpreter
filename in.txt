@@ -1,15 +1,34 @@
-trait Iterable {
-  has_next
-  next
+trait Shoutable {
+  shout
+  inner
 }
 
-struct Range {
-  start
-  end
-  current
+struct Echo {
+  msg
 }
 
-impl Iterable for Range {
-  fun has_next(self) { return self.current < self.end }
-  fun next(self) { return self.current = self.current + 1 }
+impl Shoutable for Echo {
+  fun inner(self) {
+    return self.msg
+  }
+  fun shout(self) {
+    return self.inner() + "!!!"
+  }
 }
+
+var e = Echo("hello")
+var s = e as Shoutable
+
+println(s.shout()) 
+
+trait Walkable {
+  walk
+}
+
+impl Walkable for Echo {
+  fun walk(self) { return self.msg + " walks" }
+}
+
+var e = Echo("hello")
+var s = e as Shoutable
+s.walk()  // should panic — wrong trait

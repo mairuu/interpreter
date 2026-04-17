@@ -128,6 +128,10 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     ObjectStructDefinition *def = (ObjectStructDefinition *)obj;
     gc_mark_object(gc, (Object *)def->name);
     gc_mark_hash_table(gc, &def->fields);
+    int impl_count = array_count(def->impls);
+    for (int i = 0; i < impl_count; i++) {
+      gc_mark_object(gc, (Object *)def->impls[i]);
+    }
     break;
   }
   case OBJECT_STRUCT_INSTANCE: {
@@ -149,6 +153,18 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     ObjectImpl *impl = (ObjectImpl *)obj;
     gc_mark_object(gc, (Object *)impl->trait);
     gc_mark_object(gc, (Object *)impl->struct_def);
+    break;
+  }
+  case OBJECT_TRAIT_OBJECT: {
+    ObjectTraitObject *trait_object = (ObjectTraitObject *)obj;
+    gc_mark_object(gc, (Object *)trait_object->instance);
+    gc_mark_object(gc, (Object *)trait_object->impl);
+    break;
+  }
+  case OBJECT_BOUND_METHOD: {
+    ObjectBoundMethod *bound_method = (ObjectBoundMethod *)obj;
+    gc_mark_value(gc, bound_method->receiver);
+    gc_mark_object(gc, (Object *)bound_method->method);
     break;
   }
   default:

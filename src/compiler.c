@@ -461,6 +461,7 @@ static void variable(CompilerContext *ctx, bool can_assign);
 static void and_(CompilerContext *ctx, bool can_assign);
 static void or_(CompilerContext *ctx, bool can_assign);
 static void dot(CompilerContext *ctx, bool can_assign);
+static void as(CompilerContext *ctx, bool can_assign);
 
 // expression
 static void if_(CompilerContext *ctx, bool can_assign);
@@ -496,6 +497,7 @@ ParseRule rules[] = {
     [TOKEN_NUMBER] = {number, NULL, PREC_NONE},
 
     [TOKEN_AND] = {NULL, and_, PREC_AND},
+    [TOKEN_AS] = {NULL, as, PREC_CALL},
     [TOKEN_BREAK] = {NULL, NULL, PREC_NONE},
     // [TOKEN_CLASS] = {NULL, NULL, PREC_NONE},
     [TOKEN_CONTINUE] = {NULL, NULL, PREC_NONE},
@@ -1158,33 +1160,63 @@ static void declaration_var(CompilerContext *ctx) {
   ctx_define_variable(ctx, index);
 }
 
+static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type) {
+  ctx_consume(ctx, TOKEN_LEFT_PAREN, "expect '(' after function name");
+
+  int param_count = 0;
+  Token self = token_from_cstr(TOKEN_IDENTIFIER, "self");
+
+  if (!ctx_check(ctx, TOKEN_RIGHT_PAREN)) {
+    do {
+      param_count++;
+      if (param_count >= UINT8_COUNT) {
+        ctx_error_at(ctx, &ctx->parser.previous,
+                     "can't have more than 255 parameters.");
+      }
+
+      if (type == PROTO_METHOD && param_count == 1) {
+        ctx_consume(ctx, TOKEN_IDENTIFIER,
+                    "expect 'self' parameter for a method.");
+
+        if (!identifier_equals(&ctx->parser.previous, &self)) {
+          ctx_error_at(ctx, &ctx->parser.previous,
+                       "first parameter of a method must be named 'self'.");
+        }
+      } else {
+        uint8_t param_index = ctx_parse_variable(ctx, "expect parameter name");
+        ctx_define_variable(ctx, param_index);
+      }
+
+    } while (ctx_match(ctx, TOKEN_COMMA));
+  }
+
+  if (type == PROTO_METHOD) {
+    if (param_count == 0) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "expect 'self' parameter for a method.");
+    }
+    param_count--;
+  }
+
+  ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after function parameters.");
+  return param_count;
+}
+
 // parse arguments and body of a function
 static uint8_t ctx_compile_function(CompilerContext *ctx, ProtoType type,
                                     Token *name) {
   Compiler compiler;
   ctx_begin_compile(ctx, &compiler, type);
 
-  if (name != NULL) {
+  if (type == PROTO_METHOD) {
+    compiler.locals[0].name = token_from_cstr(TOKEN_IDENTIFIER, "self");
+  } else if (name != NULL) {
     compiler.locals[0].name = *name;
   }
 
   ctx_begin_scope(ctx);
 
-  ctx_consume(ctx, TOKEN_LEFT_PAREN,
-              name ? "expect '(' after function name"
-                   : "expect '(' after function declaration");
-  if (!ctx_check(ctx, TOKEN_RIGHT_PAREN)) {
-    do {
-      ctx->current_compiler->proto->arity++;
-      if (ctx->current_compiler->proto->arity >= UINT8_COUNT) {
-        ctx_error_at(ctx, &ctx->parser.previous,
-                     "can't have more than 255 parameters.");
-      }
-      uint8_t param_index = ctx_parse_variable(ctx, "expect parameter name");
-      ctx_define_variable(ctx, param_index);
-    } while (ctx_match(ctx, TOKEN_COMMA));
-  }
-  ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after function parameters.");
+  compiler.proto->arity = ctx_parse_parameter_list(ctx, type);
 
   ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before function body.");
   statement_block(ctx);
@@ -1341,7 +1373,7 @@ static void declaration_impl(CompilerContext *ctx) {
 
     ctx_consume(ctx, TOKEN_IDENTIFIER, "expect method name in impl body.");
     Token method_name_token = ctx->parser.previous;
-    ctx_compile_function(ctx, PROTO_FUNCTION, &method_name_token);
+    ctx_compile_function(ctx, PROTO_METHOD, &method_name_token);
 
     ctx_emit_byte(ctx, OP_IMPL_METHOD);
   }
@@ -1376,9 +1408,7 @@ static void grouping(CompilerContext *ctx, bool can_assign) {
   ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after expression.");
 }
 
-static void call(CompilerContext *ctx, bool can_assign) {
-  (void)can_assign;
-
+int ctx_parse_argument_list(CompilerContext *ctx) {
   int arg_count = 0;
   if (!ctx_check(ctx, TOKEN_RIGHT_PAREN)) {
     do {
@@ -1391,7 +1421,12 @@ static void call(CompilerContext *ctx, bool can_assign) {
     } while (ctx_match(ctx, TOKEN_COMMA));
   }
   ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after arguments.");
+  return arg_count;
+}
 
+static void call(CompilerContext *ctx, bool can_assign) {
+  (void)can_assign;
+  int arg_count = ctx_parse_argument_list(ctx);
   ctx_emit_bytes(ctx, OP_CALL, (uint8_t)arg_count);
 }
 
@@ -1543,10 +1578,21 @@ static void dot(CompilerContext *ctx, bool can_assign) {
 
   if (can_assign && ctx_match(ctx, TOKEN_EQUAL)) {
     expression(ctx);
-    ctx_emit_bytes(ctx, OP_SET_FIELD, name, 0, 0, 0);
+    ctx_emit_bytes(ctx, OP_SET_PROPERTY, name, 0, 0, 0);
+  } else if (ctx_match(ctx, TOKEN_LEFT_PAREN)) {
+    int arg_count = ctx_parse_argument_list(ctx);
+    // name_const + 2 bytes trait_id + 1 byte slot = 4 bytes padding
+    ctx_emit_bytes(ctx, OP_CALL_METHOD, name, 0, 0, 0, arg_count);
   } else {
-    ctx_emit_bytes(ctx, OP_GET_FIELD, name, 0, 0, 0);
+    ctx_emit_bytes(ctx, OP_GET_PROPERTY, name, 0, 0, 0);
   }
+}
+
+static void as(CompilerContext *ctx, bool can_assign) {
+  (void)can_assign;
+
+  expression(ctx);
+  ctx_emit_byte(ctx, OP_CAST_TRAIT);
 }
 
 static void if_(CompilerContext *ctx, bool can_assign) {

@@ -36,6 +36,7 @@ typedef enum {
   TOKEN_NUMBER,
 
   TOKEN_AND,
+  TOKEN_AS,
   TOKEN_BREAK,
   // TOKEN_CLASS,
   TOKEN_CONTINUE,
@@ -69,6 +70,8 @@ typedef struct {
   const char *source; // pointer to the start of the token in the source,
                       // used for error reporting
 } Token;
+
+Token token_from_cstr(TokenType type, const char *c_str);
 
 void scanner_init(Scanner *scanner, const char *source);
 

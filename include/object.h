@@ -16,6 +16,8 @@ typedef enum {
   OBJECT_STRUCT_INSTANCE,
   OBJECT_TRAIT_DEFINITION,
   OBJECT_IMPL,
+  OBJECT_TRAIT_OBJECT,
+  OBJECT_BOUND_METHOD
 } ObjectType;
 
 struct Object {
@@ -92,6 +94,18 @@ typedef struct ObjectImpl {
   ObjectClosure *methods[];
 } ObjectImpl;
 
+typedef struct {
+  Object object;
+  ObjectStructInstance *instance;
+  ObjectImpl *impl;
+} ObjectTraitObject;
+
+typedef struct {
+  Object object;
+  Value receiver;
+  ObjectClosure *method;
+} ObjectBoundMethod;
+
 void obj_print(Object *obj);
 
 static inline bool value_is_obj_type(Value value, ObjectType type) {
@@ -110,6 +124,7 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define IS_TRAIT_DEFINITION(value)                                             \
   value_is_obj_type(value, OBJECT_TRAIT_DEFINITION)
 #define IS_IMPL(value) value_is_obj_type(value, OBJECT_IMPL)
+#define IS_TRAIT_OBJECT(value) value_is_obj_type(value, OBJECT_TRAIT_OBJECT)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
@@ -120,6 +135,7 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define AS_STRUCT_INSTANCE(value) ((ObjectStructInstance *)AS_OBJECT(value))
 #define AS_TRAIT_DEFINITION(value) ((ObjectTraitDefinition *)AS_OBJECT(value))
 #define AS_IMPL(value) ((ObjectImpl *)AS_OBJECT(value))
+#define AS_TRAIT_OBJECT(value) ((ObjectTraitObject *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void obj_free(Object **obj, Allocator *al);
@@ -148,6 +164,8 @@ ObjectStructDefinition *obj_struct_definition_new(Allocator *al,
                                                   ObjectString *name,
                                                   uint32_t definition_id);
 void obj_struct_definition_free(ObjectStructDefinition **obj, Allocator *al);
+ObjectImpl *obj_struct_definition_find_impl(ObjectStructDefinition *def,
+                                            ObjectTraitDefinition *trait);
 
 ObjectStructInstance *obj_struct_instance_new(Allocator *al,
                                               ObjectStructDefinition *def);
@@ -162,3 +180,12 @@ int obj_trait_find_slot(ObjectTraitDefinition *trait,
 ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
                          ObjectStructDefinition *struct_def);
 void obj_impl_free(ObjectImpl **obj, Allocator *al);
+
+ObjectTraitObject *obj_trait_object_new(Allocator *al,
+                                        ObjectStructInstance *instance,
+                                        ObjectImpl *impl);
+void obj_trait_object_free(ObjectTraitObject **obj, Allocator *al);
+
+ObjectBoundMethod *obj_bound_method_new(Allocator *al, Value receiver,
+                                        ObjectClosure *method);
+void obj_bound_method_free(ObjectBoundMethod **obj, Allocator *al);

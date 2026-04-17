@@ -102,6 +102,25 @@ static ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
   return impl;
 }
 
+static ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
+                                              ObjectStructInstance *instance,
+                                              ObjectImpl *impl) {
+  ObjectTraitObject *trait_object =
+      obj_trait_object_new(&vm->al, instance, impl);
+  vm_track_object(vm, &trait_object->object);
+  return trait_object;
+}
+
+// todo: bound method
+// static ObjectBoundMethod *
+// vm_new_bound_method(VirtualMachine *vm, Value receiver, ObjectClosure
+// *method) {
+//   ObjectBoundMethod *bound_method =
+//       obj_bound_method_new(&vm->al, receiver, method);
+//   vm_track_object(vm, &bound_method->object);
+//   return bound_method;
+// }
+
 static uint32_t hash_string(const char *str, int length) {
   uint32_t hash = 2166136261u;
   for (int i = 0; i < length; i++) {
@@ -545,6 +564,10 @@ static void vm_close_upvalues(VirtualMachine *vm, Value *last) {
 static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
                                  uint8_t *ip, Chunk *chunk, uint8_t name_idx,
                                  uint16_t cached_id, uint8_t cached_offset) {
+  if (IS_TRAIT_OBJECT(receiver)) {
+    receiver = OBJECT_VALUE(AS_TRAIT_OBJECT(receiver)->instance);
+  }
+
   if (!IS_STRUCT_INSTANCE(receiver)) {
     vm_runtime_error(vm, "only struct instances have fields");
     return NULL;
@@ -552,7 +575,8 @@ static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
 
   ObjectStructInstance *instance = AS_STRUCT_INSTANCE(receiver);
 
-  if (instance->def->definition_id == cached_id) {
+  // 0 is uninitialized cached_id, id starts from 1
+  if (cached_id != 0 && instance->def->definition_id == cached_id) {
     return &instance->fields[cached_offset];
   }
 
@@ -561,11 +585,11 @@ static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
 
   if (offset_val) {
     uint8_t offset = (uint8_t)AS_NUMBER(*offset_val);
+    // patch: [op, name, id(2), slot(1)]
+    //         0    1     2            4
     int instruction_start = (ip - 5) - chunk->instructions;
-
     chunk_patch_short(chunk, instruction_start + 2,
                       instance->def->definition_id);
-
     chunk_patch_byte(chunk, instruction_start + 4, offset);
 
     return &instance->fields[offset];
@@ -573,6 +597,45 @@ static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
 
   vm_runtime_error(vm, "undefined field '%s'.", name->chars);
   return NULL;
+}
+
+static ObjectClosure *vm_method_reference(VirtualMachine *vm, Value receiver,
+                                          uint8_t *ip, Chunk *chunk,
+                                          uint8_t name_idx,
+                                          uint16_t cached_trait_id,
+                                          uint8_t cached_slot) {
+  if (!IS_TRAIT_OBJECT(receiver)) {
+    vm_runtime_error(vm, "receiver is not a trait object");
+    return NULL;
+  }
+
+  ObjectTraitObject *fat = AS_TRAIT_OBJECT(receiver);
+
+  // 0 is uninitialized cached_id, id starts from 1
+  if (cached_trait_id != 0 && fat->impl->trait->trait_id == cached_trait_id) {
+    return fat->impl->methods[cached_slot];
+  }
+
+  ObjectString *name = AS_STRING(chunk->constants[name_idx]);
+
+  int slot = obj_trait_find_slot(fat->impl->trait, name);
+  if (slot >= UINT8_MAX) {
+    vm_runtime_error(vm, "trait method slot overflow");
+    return NULL;
+  }
+  if (slot == -1) {
+    vm_runtime_error(vm, "trait '%s' has no method '%s'",
+                     fat->impl->trait->name->chars, name->chars);
+    return NULL;
+  }
+
+  // patch: [op, name, trait_id(2), slot(1), arg_count]
+  //         0    1     2            4        5
+  int instruction_start = (ip - 6) - chunk->instructions;
+  chunk_patch_short(chunk, instruction_start + 2, fat->impl->trait->trait_id);
+  chunk_patch_byte(chunk, instruction_start + 4, (uint8_t)slot);
+
+  return fat->impl->methods[slot];
 }
 
 static bool vm_run(VirtualMachine *vm) {
@@ -728,12 +791,13 @@ static bool vm_run(VirtualMachine *vm) {
       *frame->upvalues[slot]->location = vm_peek(vm, 0);
       break;
     }
-    case OP_GET_FIELD: {
+    case OP_GET_PROPERTY: {
       uint8_t name_idx = READ_BYTE();
       uint16_t cached_id = READ_SHORT();
       uint8_t cached_offset = READ_BYTE();
 
       Value receiver = vm_peek(vm, 0);
+
       Value *field_ref =
           vm_field_reference(vm, receiver, ip, &frame->function->chunk,
                              name_idx, cached_id, cached_offset);
@@ -741,9 +805,10 @@ static bool vm_run(VirtualMachine *vm) {
         vm_pop(vm); // pop the receiver
         vm_push(vm, *field_ref);
       }
+
       break;
     }
-    case OP_SET_FIELD: {
+    case OP_SET_PROPERTY: {
       uint8_t name_idx = READ_BYTE();
       uint16_t cached_id = READ_SHORT();
       uint8_t cached_offset = READ_BYTE();
@@ -842,6 +907,61 @@ static bool vm_run(VirtualMachine *vm) {
       array_push(trait->method_names, method_name, &vm->al);
       break;
     }
+    case OP_CAST_TRAIT: {
+      Value trait_val = vm_peek(vm, 0);
+      if (!IS_TRAIT_DEFINITION(trait_val)) {
+        vm_runtime_error(vm, "expected a trait definition for cast trait");
+        break;
+      }
+      Value instance_val = vm_peek(vm, 1);
+      if (!IS_STRUCT_INSTANCE(instance_val)) {
+        vm_runtime_error(vm, "expected a struct instance for cast trait");
+        break;
+      }
+
+      ObjectStructInstance *instance = AS_STRUCT_INSTANCE(instance_val);
+      ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(trait_val);
+
+      ObjectImpl *impl = obj_struct_definition_find_impl(instance->def, trait);
+      if (impl == NULL) {
+        vm_runtime_error(
+            vm, "no implementation found for trait '%s' on struct '%s'",
+            trait->name->chars, instance->def->name->chars);
+        break;
+      }
+
+      // warn:
+      // i jsut realized if the gc is moving objects around (which is not the
+      // case it's a simple mark-and-sweep), the objects pointer might invalid
+      // should always read objects from the stack. instead of keeping pointers
+      // to them in local variables
+      ObjectTraitObject *trait_object = vm_new_trait_object(vm, instance, impl);
+      // ^ as i said this might trigger a gc which moves the instance and impl
+      // objects, so read them again from the stack instead of using the local
+      // variables
+
+      vm_pop(vm); // pop the trait definition
+      vm_pop(vm); // pop the struct instance
+      vm_push(vm, OBJECT_VALUE(trait_object));
+      break;
+    }
+    case OP_CALL_METHOD: {
+      uint8_t name_idx = READ_BYTE();
+      uint16_t cached_trait = READ_SHORT();
+      uint8_t cached_slot = READ_BYTE();
+      uint8_t arg_count = READ_BYTE();
+      frame->ip = ip;
+
+      Value receiver = vm_peek(vm, arg_count);
+      ObjectClosure *method =
+          vm_method_reference(vm, receiver, ip, &frame->function->chunk,
+                              name_idx, cached_trait, cached_slot);
+      if (method && vm_call_closure(vm, method, arg_count)) {
+        frame = &vm->frames[vm->frame_count - 1];
+        ip = frame->ip;
+      }
+      break;
+    }
 
     case OP_IMPL: {
       Value trait_val = vm_peek(vm, 1);
@@ -855,8 +975,16 @@ static bool vm_run(VirtualMachine *vm) {
         break;
       }
 
-      ObjectImpl *impl = vm_new_impl(vm, AS_TRAIT_DEFINITION(trait_val),
-                                     AS_STRUCT_DEFINITION(struct_val));
+      ObjectStructDefinition *struct_def = AS_STRUCT_DEFINITION(struct_val);
+      ObjectTraitDefinition *trait_def = AS_TRAIT_DEFINITION(trait_val);
+      if (obj_struct_definition_find_impl(struct_def, trait_def) != NULL) {
+        vm_runtime_error(
+            vm, "struct '%s' already has an implementation for trait '%s'",
+            struct_def->name->chars, trait_def->name->chars);
+        break;
+      }
+
+      ObjectImpl *impl = vm_new_impl(vm, trait_def, struct_def);
       vm_pop(vm); // pop the trait definition
       vm_pop(vm); // pop the struct definition
       vm_push(vm, OBJECT_VALUE(impl));

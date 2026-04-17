@@ -42,6 +42,15 @@ void obj_print(Object *obj) {
     printf("<impl of %s for %s>", ((ObjectImpl *)obj)->trait->name->chars,
            ((ObjectImpl *)obj)->struct_def->name->chars);
     break;
+  case OBJECT_TRAIT_OBJECT:
+    printf("<trait object of %s for %s>",
+           ((ObjectTraitObject *)obj)->impl->trait->name->chars,
+           ((ObjectTraitObject *)obj)->impl->struct_def->name->chars);
+    break;
+  case OBJECT_BOUND_METHOD:
+    printf("<bound method of %s>",
+           ((ObjectBoundMethod *)obj)->method->function->name->chars);
+    break;
   default:
     assert(false && "unknown object type");
   }
@@ -170,6 +179,7 @@ ObjectStructDefinition *obj_struct_definition_new(Allocator *al,
       OBJECT_NEW(al, ObjectStructDefinition, OBJECT_STRUCT_DEFINITION);
   def->name = name;
   def->definition_id = definition_id;
+  array_init(def->impls, ObjectImpl *, al);
   ht_init(&def->fields, al);
   return def;
 }
@@ -180,8 +190,21 @@ void obj_struct_definition_free(ObjectStructDefinition **obj, Allocator *al) {
   }
 
   ht_destroy(&(*obj)->fields, al);
+  array_free((*obj)->impls, al);
   al_free(al, *obj, sizeof(ObjectStructDefinition));
   *obj = NULL;
+}
+
+ObjectImpl *obj_struct_definition_find_impl(ObjectStructDefinition *def,
+                                            ObjectTraitDefinition *trait) {
+  int impl_count = array_count(def->impls);
+  for (int i = 0; i < impl_count; i++) {
+    ObjectImpl *candidate = def->impls[i];
+    if (candidate->trait->trait_id == trait->trait_id) {
+      return candidate;
+    }
+  }
+  return NULL;
 }
 
 static inline size_t struct_instance_size(ObjectStructDefinition *def) {
@@ -265,6 +288,41 @@ void obj_impl_free(ObjectImpl **obj, Allocator *al) {
   *obj = NULL;
 }
 
+ObjectTraitObject *obj_trait_object_new(Allocator *al,
+                                        ObjectStructInstance *instance,
+                                        ObjectImpl *impl) {
+  ObjectTraitObject *trait_object =
+      OBJECT_NEW(al, ObjectTraitObject, OBJECT_TRAIT_OBJECT);
+  trait_object->instance = instance;
+  trait_object->impl = impl;
+  return trait_object;
+}
+
+void obj_trait_object_free(ObjectTraitObject **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, sizeof(ObjectTraitObject));
+  *obj = NULL;
+}
+
+ObjectBoundMethod *obj_bound_method_new(Allocator *al, Value receiver,
+                                        ObjectClosure *method) {
+  ObjectBoundMethod *bound_method =
+      OBJECT_NEW(al, ObjectBoundMethod, OBJECT_BOUND_METHOD);
+  bound_method->receiver = receiver;
+  bound_method->method = method;
+  return bound_method;
+}
+
+void obj_bound_method_free(ObjectBoundMethod **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, sizeof(ObjectBoundMethod));
+  *obj = NULL;
+}
+
 void obj_free(Object **obj, Allocator *al) {
   switch ((*obj)->type) {
   case OBJECT_STRING:
@@ -293,6 +351,12 @@ void obj_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_IMPL:
     obj_impl_free((ObjectImpl **)obj, al);
+    break;
+  case OBJECT_TRAIT_OBJECT:
+    obj_trait_object_free((ObjectTraitObject **)obj, al);
+    break;
+  case OBJECT_BOUND_METHOD:
+    obj_bound_method_free((ObjectBoundMethod **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

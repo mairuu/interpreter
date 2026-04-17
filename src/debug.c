@@ -37,7 +37,8 @@ static int jump_instruction(const char *name, Chunk *chunk, bool is_forward,
 }
 
 static int field_instruction(const char *name, Chunk *chunk, int offset) {
-  // [op_code, name_constant, def_id, def_id, offset]
+  // [op, name, id(2), slot(1)]
+  // 0    1     2            4
   uint8_t name_constant = chunk->instructions[offset + 1];
   uint16_t def_id = (uint16_t)(chunk->instructions[offset + 2] << 8) |
                     chunk->instructions[offset + 3];
@@ -48,6 +49,22 @@ static int field_instruction(const char *name, Chunk *chunk, int offset) {
   value_print(constant);
   printf(" %d %d\n", def_id, offset_val);
   return offset + 5;
+}
+
+static int trait_method_instruction(const char *name, Chunk *chunk,
+                                    int offset) {
+  // [op, name, trait_id(2), slot(1), arg_count]
+  // 0    1     2            4        5
+  uint8_t name_constant = chunk->instructions[offset + 1];
+  uint16_t trait_id = (uint16_t)(chunk->instructions[offset + 2] << 8) |
+                      chunk->instructions[offset + 3];
+  uint8_t slot = chunk->instructions[offset + 4];
+  uint8_t arg_count = chunk->instructions[offset + 5];
+  printf("%-16s %d ", name, name_constant);
+  Value constant = chunk->constants[name_constant];
+  value_print(constant);
+  printf(" %d %d %d\n", trait_id, slot, arg_count);
+  return offset + 6;
 }
 
 void disassemble_chunk(Chunk *chunk, const char *name) {
@@ -116,10 +133,10 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     return byte_instruction("OP_GET_UPVALUE", chunk, offset);
   case OP_SET_UPVALUE:
     return byte_instruction("OP_SET_UPVALUE", chunk, offset);
-  case OP_GET_FIELD:
-    return field_instruction("OP_GET_FIELD", chunk, offset);
-  case OP_SET_FIELD:
-    return field_instruction("OP_SET_FIELD", chunk, offset);
+  case OP_GET_PROPERTY:
+    return field_instruction("OP_GET_PROPERTY", chunk, offset);
+  case OP_SET_PROPERTY:
+    return field_instruction("OP_SET_PROPERTY", chunk, offset);
 
   case OP_JUMP_IF_FALSE:
     return jump_instruction("OP_JUMP_IF_FALSE", chunk, true, offset);
@@ -162,6 +179,11 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     return constant_instruction("OP_TRAIT", chunk, offset);
   case OP_TRAIT_METHOD:
     return constant_instruction("OP_TRAIT_METHOD", chunk, offset);
+  case OP_CAST_TRAIT:
+    return simple_instruction("OP_CAST_TRAIT", offset);
+  case OP_CALL_METHOD:
+    return trait_method_instruction("OP_CALL_METHOD", chunk, offset);
+
   case OP_IMPL:
     return simple_instruction("OP_IMPL", offset);
   case OP_IMPL_METHOD:

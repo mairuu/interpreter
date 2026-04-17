@@ -2,6 +2,14 @@
 
 #include <string.h>
 
+Token token_from_cstr(TokenType type, const char *c_str) {
+  return (Token){.type = type,
+                 .start = c_str,
+                 .length = (int)strlen(c_str),
+                 .line_number = 0,
+                 .source = c_str};
+}
+
 void scanner_init(Scanner *scanner, const char *source) {
   scanner->start = source;
   scanner->current = source;
@@ -130,7 +138,15 @@ static TokenType check_keyword(Scanner *s, int start, int length,
 static TokenType identifier_type(Scanner *s) {
   switch (s->start[0]) {
   case 'a':
-    return check_keyword(s, 1, 2, "nd", TOKEN_AND);
+    if (s->current - s->start > 1) {
+      switch (s->start[1]) {
+      case 'n':
+        return check_keyword(s, 2, 1, "d", TOKEN_AND);
+      case 's':
+        return check_keyword(s, 2, 0, "", TOKEN_AS);
+      }
+    }
+    break;
   case 'b':
     return check_keyword(s, 1, 4, "reak", TOKEN_BREAK);
   case 'c':
