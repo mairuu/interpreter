@@ -107,6 +107,9 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     gc_mark_object(gc, (Object *)function->name);
     gc_mark_values(gc, function->chunk.constants,
                    array_count(function->chunk.constants));
+    for (int i = 0; i < function->arity; i++) {
+      gc_mark_object(gc, (Object *)function->constraints[i]);
+    }
     break;
   }
   case OBJECT_UPVALUE: {

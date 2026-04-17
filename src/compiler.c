@@ -1160,7 +1160,20 @@ static void declaration_var(CompilerContext *ctx) {
   ctx_define_variable(ctx, index);
 }
 
-static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type) {
+// impl Updatable for Point {
+//   fun tick(self, dt) {
+//     self.x = self.x + self.v * dt
+//   }
+// }
+
+// fun simulate(u: Updatable) {
+//   u.tick(1)
+// }
+
+// temp
+
+static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type,
+                                    Token *type_constraint) {
   ctx_consume(ctx, TOKEN_LEFT_PAREN, "expect '(' after function name");
 
   int param_count = 0;
@@ -1182,11 +1195,26 @@ static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type) {
           ctx_error_at(ctx, &ctx->parser.previous,
                        "first parameter of a method must be named 'self'.");
         }
+
+        if (ctx_check(ctx, TOKEN_COLON)) {
+          ctx_advance(ctx);
+          ctx_error_at(ctx, &ctx->parser.previous,
+                       "self parameter cannot have a constraint.");
+          ctx_advance(ctx); // constraint identifier
+        }
       } else {
         uint8_t param_index = ctx_parse_variable(ctx, "expect parameter name");
         ctx_define_variable(ctx, param_index);
-      }
 
+        if (ctx_match(ctx, TOKEN_COLON)) {
+          ctx_consume(ctx, TOKEN_IDENTIFIER,
+                      "expect type constraint after ':'.");
+          Token param_name = ctx->parser.previous;
+          type_constraint[param_count - 1] = param_name;
+        } else {
+          type_constraint[param_count - 1] = (Token){0};
+        }
+      }
     } while (ctx_match(ctx, TOKEN_COMMA));
   }
 
@@ -1216,7 +1244,8 @@ static uint8_t ctx_compile_function(CompilerContext *ctx, ProtoType type,
 
   ctx_begin_scope(ctx);
 
-  compiler.proto->arity = ctx_parse_parameter_list(ctx, type);
+  Token type_constraint[10] = {0};
+  compiler.proto->arity = ctx_parse_parameter_list(ctx, type, type_constraint);
 
   ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before function body.");
   statement_block(ctx);
@@ -1235,6 +1264,17 @@ static uint8_t ctx_compile_function(CompilerContext *ctx, ProtoType type,
     ctx_emit_bytes(ctx, OP_CONSTANT, proto_constant);
   }
 
+  // int scope_depth = ctx->current_compiler->scope_depth;
+  // ctx->current_compiler->scope_depth = scope_depth - 1;
+  for (int i = 0; i < compiler.proto->arity; i++) {
+    if (type_constraint[i].start == NULL) {
+      continue;
+    }
+    ctx_named_variable(ctx, type_constraint[i], false);
+    ctx_emit_bytes(ctx, OP_CONSTRAINT, i);
+  }
+  // ctx->current_compiler->scope_depth = scope_depth;
+
   return proto_constant;
 }
 
@@ -1250,7 +1290,7 @@ static void declaration_fun(CompilerContext *ctx) {
 
 static void declaration_struct(CompilerContext *ctx) {
   ctx_consume(ctx, TOKEN_IDENTIFIER, "expect struct name.");
-
+  ctx_declare_variable(ctx);
   uint8_t struct_name_constant =
       ctx_identifier_constant(ctx, &ctx->parser.previous);
   ctx_emit_bytes(ctx, OP_STRUCT, struct_name_constant);
@@ -1295,7 +1335,7 @@ static void declaration_struct(CompilerContext *ctx) {
 
 static void declaration_trait(CompilerContext *ctx) {
   ctx_consume(ctx, TOKEN_IDENTIFIER, "expect trait name.");
-
+  ctx_declare_variable(ctx);
   uint8_t trait_name_constant =
       ctx_identifier_constant(ctx, &ctx->parser.previous);
   ctx_emit_bytes(ctx, OP_TRAIT, trait_name_constant);

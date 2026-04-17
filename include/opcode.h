@@ -34,6 +34,8 @@ typedef enum {
   OP_LOOP,
 
   OP_CLOSURE,
+  OP_CONSTRAINT, // slot_idx > binds type constraint to parameter at
+                 // slot_idx
   OP_CLOSE_UPVALUE,
 
   OP_STRUCT,

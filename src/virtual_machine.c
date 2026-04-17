@@ -45,8 +45,8 @@ static ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
   return string;
 }
 
-static ObjectFunction *vm_new_function(VirtualMachine *vm) {
-  ObjectFunction *function = obj_function_new(&vm->al);
+static ObjectFunction *vm_new_function(VirtualMachine *vm, int arity) {
+  ObjectFunction *function = obj_function_new(&vm->al, arity);
   vm_track_object(vm, &function->object);
   return function;
 }
@@ -207,7 +207,7 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
 }
 
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
-  ObjectFunction *function = vm_new_function(vm);
+  ObjectFunction *function = vm_new_function(vm, proto->arity);
   vm_push(vm, OBJECT_VALUE(function));
   ConstantLoader loader = {
       .load_constant = load_constant,
@@ -215,8 +215,8 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
   };
 
   chunk_load_from_proto(&function->chunk, proto, &loader, &vm->al);
-  function->arity = proto->arity;
   function->upvalue_count = proto->upvalue_count;
+
   if (proto->name != NULL) {
     function->name = vm_intern_string(vm, proto->name, strlen(proto->name));
   }
@@ -292,6 +292,71 @@ static void vm_concatenate(VirtualMachine *vm) {
   vm_push(vm, OBJECT_VALUE(str));
 }
 
+static ObjectStructInstance *vm_extract_struct_instance(VirtualMachine *vm,
+                                                        Value value) {
+  if (IS_STRUCT_INSTANCE(value)) {
+    return AS_STRUCT_INSTANCE(value);
+  }
+
+  if (IS_TRAIT_OBJECT(value)) {
+    ObjectTraitObject *trait_object = AS_TRAIT_OBJECT(value);
+    // if (trait_object->impl->trait == trait) {
+    //   return trait_object->instance; // signal: already the right trait
+    // }
+    return trait_object->instance;
+  }
+
+  vm_runtime_error(vm,
+                   "value does not satisfy the constraint: expected a struct "
+                   "instance or trait object");
+  return NULL;
+}
+
+static ObjectTraitObject *vm_cast_trait(VirtualMachine *vm, Value value,
+                                        ObjectTraitDefinition *trait) {
+  if (IS_TRAIT_OBJECT(value)) {
+    ObjectTraitObject *trait_object = AS_TRAIT_OBJECT(value);
+    if (trait_object->impl->trait == trait) {
+      return trait_object;
+    }
+  }
+
+  ObjectStructInstance *instance = vm_extract_struct_instance(vm, value);
+  if (instance == NULL) {
+    return NULL;
+  }
+
+  ObjectImpl *impl = obj_struct_definition_find_impl(instance->def, trait);
+  if (impl != NULL) {
+    return vm_new_trait_object(vm, instance, impl);
+  }
+
+  vm_runtime_error(vm, "no implementation found for trait '%s' on struct '%s'",
+                   trait->name->chars, instance->def->name->chars);
+  return NULL;
+}
+
+static bool vm_validate_argument_constraints(VirtualMachine *vm,
+                                             ObjectFunction *function,
+                                             int arg_count) {
+  for (int i = 0; i < arg_count; i++) {
+    ObjectTraitDefinition *constraint = function->constraints[i];
+    if (!constraint) {
+      continue; // no constraint for this parameter
+    }
+
+    Value arg = vm_peek(vm, arg_count - 1 - i);
+    ObjectTraitObject *trait_object = vm_cast_trait(vm, arg, constraint);
+    if (!trait_object) {
+      return false; // vm_cast_trait already reports the error
+    }
+
+    // replace the argument with the trait object
+    vm->stack.top[i - arg_count] = OBJECT_VALUE(trait_object);
+  }
+  return true;
+}
+
 static bool vm_call(VirtualMachine *vm, ObjectFunction *function,
                     int arg_count) {
   if (arg_count != function->arity) {
@@ -299,8 +364,13 @@ static bool vm_call(VirtualMachine *vm, ObjectFunction *function,
                      arg_count);
     return false;
   }
+
   if (vm->frame_count >= FRAMES_MAX) {
     vm_runtime_error(vm, "stack overflow");
+    return false;
+  }
+
+  if (!vm_validate_argument_constraints(vm, function, arg_count)) {
     return false;
   }
 
@@ -451,6 +521,45 @@ static Value native_number(VirtualMachine *vm, int arg_count, Value *args) {
   return NIL_VALUE;
 }
 
+// strigify a value
+static Value native_str(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)vm;
+  if (arg_count != 1) {
+    vm_runtime_error(vm, "str() takes exactly one argument");
+    return NIL_VALUE;
+  }
+
+  char buf[64];
+  buf[0] = '\0';
+
+  Value arg = args[0];
+  switch (arg.type) {
+  case VALUE_BOOL:
+    snprintf(buf, sizeof(buf), "%s", AS_BOOL(arg) ? "true" : "false");
+    break;
+  case VALUE_NUMBER:
+    snprintf(buf, sizeof(buf), "%g", AS_NUMBER(arg));
+    break;
+  case VALUE_NIL:
+    return OBJECT_VALUE(vm->type_nil);
+  case VALUE_OBJECT:
+    if (IS_STRING(arg)) {
+      return arg;
+    }
+    break;
+  case VALUE_EMPTY:
+    break;
+  }
+
+  int len = strlen(buf);
+
+  hash_string(buf, len);
+  char *copy = copy_string(buf, len, &vm->al);
+  ObjectString *string = vm_new_string(vm, copy, len, hash_string(copy, len));
+
+  return OBJECT_VALUE(string);
+}
+
 static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
   (void)vm;
   (void)arg_count;
@@ -494,6 +603,7 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   vm_define_native(vm, "println", native_println);
   vm_define_native(vm, "type", native_type);
   vm_define_native(vm, "number", native_number);
+  vm_define_native(vm, "str", native_str);
   vm_define_native(vm, "readline", native_readline);
 }
 
@@ -636,6 +746,24 @@ static ObjectClosure *vm_method_reference(VirtualMachine *vm, Value receiver,
   chunk_patch_byte(chunk, instruction_start + 4, (uint8_t)slot);
 
   return fat->impl->methods[slot];
+}
+
+static bool vm_bind_constraint(VirtualMachine *vm, Value target,
+                               Value constraint, uint8_t param_idx) {
+  (void)vm;
+  if (!IS_TRAIT_DEFINITION(constraint)) {
+    return false; // constraint must be a trait definition
+  }
+
+  assert((IS_FUNCTION(target) || IS_CLOSURE(target)) &&
+         "target must be a function or closure");
+
+  ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(constraint);
+
+  ObjectFunction *function =
+      IS_FUNCTION(target) ? AS_FUNCTION(target) : AS_CLOSURE(target)->function;
+
+  return obj_function_bind_constraint(function, param_idx, trait);
 }
 
 static bool vm_run(VirtualMachine *vm) {
@@ -861,6 +989,18 @@ static bool vm_run(VirtualMachine *vm) {
       }
       break;
     }
+    case OP_CONSTRAINT: {
+      uint8_t slot_idx = READ_BYTE();
+
+      if (!vm_bind_constraint(vm, vm_peek(vm, 1), (vm_peek(vm, 0)), slot_idx)) {
+        vm_runtime_error(vm, "constraint is not bindable");
+        break;
+      }
+
+      vm_pop(vm); // pop the constraint
+      // leaves target
+      break;
+    };
     case OP_CLOSE_UPVALUE: {
       vm_close_upvalues(vm, vm->stack.top - 1);
       break;
@@ -913,32 +1053,13 @@ static bool vm_run(VirtualMachine *vm) {
         vm_runtime_error(vm, "expected a trait definition for cast trait");
         break;
       }
-      Value instance_val = vm_peek(vm, 1);
-      if (!IS_STRUCT_INSTANCE(instance_val)) {
-        vm_runtime_error(vm, "expected a struct instance for cast trait");
-        break;
-      }
 
-      ObjectStructInstance *instance = AS_STRUCT_INSTANCE(instance_val);
       ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(trait_val);
-
-      ObjectImpl *impl = obj_struct_definition_find_impl(instance->def, trait);
-      if (impl == NULL) {
-        vm_runtime_error(
-            vm, "no implementation found for trait '%s' on struct '%s'",
-            trait->name->chars, instance->def->name->chars);
-        break;
+      ObjectTraitObject *trait_object =
+          vm_cast_trait(vm, vm_peek(vm, 1), trait);
+      if (!trait_object) {
+        break; // vm_cast_trait already reports the error
       }
-
-      // warn:
-      // i jsut realized if the gc is moving objects around (which is not the
-      // case it's a simple mark-and-sweep), the objects pointer might invalid
-      // should always read objects from the stack. instead of keeping pointers
-      // to them in local variables
-      ObjectTraitObject *trait_object = vm_new_trait_object(vm, instance, impl);
-      // ^ as i said this might trigger a gc which moves the instance and impl
-      // objects, so read them again from the stack instead of using the local
-      // variables
 
       vm_pop(vm); // pop the trait definition
       vm_pop(vm); // pop the struct instance
@@ -1079,26 +1200,29 @@ static bool vm_run(VirtualMachine *vm) {
   return false;
 }
 
-InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
-  InterpretResult result = INTERPRET_OK;
-
-  Proto *proto = compile(source, &vm->al);
-  if (proto == NULL) {
-    result = INTERPRET_COMPILE_ERROR;
-    goto _exit;
+static InterpretResult vm_execute_script(VirtualMachine *vm,
+                                         ObjectFunction *function) {
+  vm_push(vm, OBJECT_VALUE(function));
+  if (!vm_call(vm, function, 0)) {
+    return INTERPRET_RUNTIME_ERROR;
   }
 
+  if (!vm_run(vm)) {
+    return INTERPRET_RUNTIME_ERROR;
+  }
+
+  return INTERPRET_OK;
+}
+
+InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
+  Proto *proto = compile(source, &vm->al);
+  if (proto == NULL) {
+    return INTERPRET_COMPILE_ERROR;
+  }
+
+  // reset vm state
   vm_reset_stack(vm);
 
-  // setup call frame for the top-level script
   ObjectFunction *function = vm_load_proto(vm, proto);
-  vm_push(vm, OBJECT_VALUE(function));
-  vm_call(vm, function, 0);
-
-  if (!vm_run(vm)) {
-    result = INTERPRET_RUNTIME_ERROR;
-  };
-
-_exit:
-  return result;
+  return vm_execute_script(vm, function);
 }

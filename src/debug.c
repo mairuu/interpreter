@@ -167,6 +167,8 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
 
     return offset;
   }
+  case OP_CONSTRAINT:
+    return byte_instruction("OP_CONSTRAINT", chunk, offset);
   case OP_CLOSE_UPVALUE:
     return simple_instruction("OP_CLOSE_UPVALUE", offset);
 

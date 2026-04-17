@@ -1,34 +1,27 @@
-trait Shoutable {
-  shout
-  inner
-}
+trait Updatable { tick }
 
-struct Echo {
-  msg
-}
+trait Describable { describe }
 
-impl Shoutable for Echo {
-  fun inner(self) {
-    return self.msg
-  }
-  fun shout(self) {
-    return self.inner() + "!!!"
+struct Point { x v }
+
+impl Updatable for Point { fun tick(self) { self.x = self.x + self.v } }
+
+impl Describable for Point {
+  fun describe(self) {
+    return "a point at x = " + str(self.x)
   }
 }
 
-var e = Echo("hello")
-var s = e as Shoutable
-
-println(s.shout()) 
-
-trait Walkable {
-  walk
+fun simulate(u: Updatable, iteration) {
+  for var i = 0; i < iteration; i = i + 1 {
+    u.tick()
+  }
 }
 
-impl Walkable for Echo {
-  fun walk(self) { return self.msg + " walks" }
-}
+simulate(Point(0, 1), 10) // auto cast
+simulate(Point(0, 1) as Updatable, 10) // already at right trait
+simulate(Point(0, 1) as Describable, 10) // wrong trait re-cast
 
-var e = Echo("hello")
-var s = e as Shoutable
-s.walk()  // should panic — wrong trait
+struct Person { name }
+
+var bad = Person("") as Updatable // bad, raise panic

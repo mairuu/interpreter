@@ -102,21 +102,40 @@ bool obj_string_equals(ObjectString *a, ObjectString *b) {
   return memcmp(a->chars, b->chars, a->length) == 0;
 }
 
-ObjectFunction *obj_function_new(Allocator *al) {
-  ObjectFunction *func = OBJECT_NEW(al, ObjectFunction, OBJECT_FUNCTION);
-  func->arity = 0;
+static inline size_t function_size(int arity) {
+  return sizeof(ObjectFunction) + sizeof(ObjectTraitDefinition *) * arity;
+}
+
+ObjectFunction *obj_function_new(Allocator *al, int arity) {
+  ObjectFunction *func =
+      (ObjectFunction *)obj_new(al, function_size(arity), OBJECT_FUNCTION);
+  func->arity = arity;
   func->upvalue_count = 0;
   func->name = NULL;
+  for (int i = 0; i < arity; i++) {
+    func->constraints[i] = NULL;
+  }
   chunk_init(&func->chunk);
   return func;
 }
 
 void obj_function_free(ObjectFunction **obj, Allocator *al) {
-  if (*obj) {
-    chunk_destroy(&(*obj)->chunk, al);
-    al_free(al, *obj, sizeof(ObjectFunction));
-    *obj = NULL;
+  if (!*obj) {
+    return;
   }
+
+  chunk_destroy(&(*obj)->chunk, al);
+  al_free(al, *obj, function_size((*obj)->arity));
+  *obj = NULL;
+}
+
+bool obj_function_bind_constraint(ObjectFunction *function, int param_idx,
+                                  ObjectTraitDefinition *trait) {
+  if (param_idx < 0 || param_idx >= function->arity) {
+    return false; // param_idx out of bounds
+  }
+  function->constraints[param_idx] = trait;
+  return true;
 }
 
 ObjectUpvalue *obj_upvalue_new(Allocator *al, Value *location) {

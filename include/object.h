@@ -34,12 +34,15 @@ typedef struct {
   bool is_interned;
 } ObjectString;
 
+typedef struct ObjectTraitDefinition ObjectTraitDefinition;
+
 typedef struct {
   Object object;
   int arity;
   int upvalue_count;
   Chunk chunk;
   ObjectString *name;
+  ObjectTraitDefinition *constraints[]; // length is arity
 } ObjectFunction;
 
 typedef struct ObjectUpvalue {
@@ -80,7 +83,7 @@ typedef struct {
   Value fields[];
 } ObjectStructInstance;
 
-typedef struct {
+typedef struct ObjectTraitDefinition {
   Object object;
   ObjectString *name;
   uint16_t trait_id;
@@ -148,8 +151,10 @@ ObjectString *obj_string_new(Allocator *al, char *chars, int length,
 void obj_string_free(ObjectString **obj, Allocator *al);
 bool obj_string_equals(ObjectString *a, ObjectString *b);
 
-ObjectFunction *obj_function_new(Allocator *al);
+ObjectFunction *obj_function_new(Allocator *al, int arity);
 void obj_function_free(ObjectFunction **obj, Allocator *al);
+bool obj_function_bind_constraint(ObjectFunction *function, int param_idx,
+                                  ObjectTraitDefinition *trait);
 
 ObjectUpvalue *obj_upvalue_new(Allocator *al, Value *location);
 void obj_upvalue_free(ObjectUpvalue **obj, Allocator *al);
