@@ -7,6 +7,7 @@
 #include <threads.h>
 
 #include "compiler.h"
+#include "definition_table.h"
 #include "dynamic_array.h"
 #include "memory.h"
 #include "opcode.h"
@@ -17,6 +18,10 @@
   8 // maximum number of variables in a multiple assignment statement, e.g. `var
     // a, b, c = 1, 2, 3`
 #define UINT8_COUNT UINT8_MAX + 1
+
+static StringView sv_from_token(Token *token) {
+  return sv_create(token->start, token->length);
+}
 
 void proto_init(Proto *proto, ProtoType type, Allocator *al) {
   proto->type = type;
@@ -162,6 +167,7 @@ typedef struct {
 
   Loop *current_loop;
   Compiler *current_compiler;
+  DefinitionTable definition;
 
   Allocator *al;
 } CompilerContext;
@@ -172,6 +178,12 @@ static void ctx_init(CompilerContext *ctx, const char *source, Allocator *al) {
   ctx->current_loop = NULL;
   ctx->current_compiler = NULL;
   ctx->al = al;
+
+  deftable_init(&ctx->definition, al);
+}
+
+static void ctx_destroy(CompilerContext *ctx) {
+  deftable_destroy(&ctx->definition, ctx->al);
 }
 
 // for speculative parsing
@@ -379,15 +391,24 @@ static int ctx_add_raw_constant_trait(CompilerContext *ctx, RawTraitDef def) {
       ctx, (RawConstant){.type = RAW_TRAIT_DEF, .as.trait_def = def});
 }
 
-// register a compile-time symbol to table entry that says "this name is a
-// struct/trait/variant definition, not a value
 static void ctx_register_definition(CompilerContext *ctx, Token name,
                                     DefinitionKind kind, int constant_index) {
-  (void)ctx;
-  (void)name;
-  (void)kind;
-  (void)constant_index;
-  // todo: add constant table into compiler
+  StringView name_str = sv_from_token(&name);
+
+  if (deftable_get(&ctx->definition, name_str) != NULL) {
+    ctx_error_at(ctx, &name, "name already defined in this scope.");
+    return;
+  }
+
+  DefinitionEntry entry = {
+      .name = str_from_str(name.start, name.length, ctx->al),
+      .kind = kind,
+      .constant_index = constant_index,
+  };
+
+  if (!deftable_put(&ctx->definition, entry, ctx->al)) {
+    ctx_error_at(ctx, &name, "failed to add definition to table.");
+  }
 }
 
 static void ctx_emit_constant(CompilerContext *ctx, RawConstant value) {
@@ -648,11 +669,21 @@ static VarRef ctx_resolve_variable(CompilerContext *ctx, Token name) {
   return ref;
 }
 
+static void check_not_definition(CompilerContext *ctx, Token *name) {
+  DefinitionEntry *entry = deftable_get(&ctx->definition, sv_from_token(name));
+  if (entry != NULL) {
+    ctx_error_at(ctx, name, "definition cannot be assigned to a variable.");
+  }
+}
+
 static void ctx_named_variable(CompilerContext *ctx, Token name,
                                bool can_assign) {
   VarRef ref = ctx_resolve_variable(ctx, name);
 
   if (can_assign && ctx_match(ctx, TOKEN_EQUAL)) {
+    if (ref.op_set == OP_SET_GLOBAL) {
+      check_not_definition(ctx, &name);
+    }
     expression(ctx);
     ctx_emit_set(ctx, ref);
   } else {
@@ -1237,6 +1268,17 @@ static void ctx_define_variable(CompilerContext *ctx, uint8_t global_index) {
 
 static void declaration_var(CompilerContext *ctx) {
   uint8_t index = ctx_parse_variable(ctx, "expect variable name");
+  Token name = ctx->parser.previous;
+
+  if (ctx->current_compiler->enclosing == NULL) {
+    DefinitionEntry *existing =
+        deftable_get(&ctx->definition, sv_from_token(&name));
+    if (existing != NULL) {
+      ctx_error_at(ctx, &name, "definition cannot be shadowed by a variable");
+      ctx_advance(ctx); // skip initializer expression
+      return;
+    }
+  }
 
   if (ctx_match(ctx, TOKEN_EQUAL)) {
     expression(ctx);
@@ -1274,6 +1316,8 @@ static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type,
                      "can't have more than 255 parameters.");
       }
 
+      Token name = ctx->parser.current;
+
       if (type == PROTO_METHOD && param_count == 1) {
         ctx_consume(ctx, TOKEN_IDENTIFIER,
                     "expect 'self' parameter for a method.");
@@ -1301,6 +1345,13 @@ static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type,
         } else {
           type_constraint[param_count - 1] = (Token){0};
         }
+      }
+
+      DefinitionEntry *existing =
+          deftable_get(&ctx->definition, sv_from_token(&name));
+      if (existing != NULL) {
+        ctx_error_at(ctx, &name,
+                     "definition cannot be shadowed by a parameter");
       }
     } while (ctx_match(ctx, TOKEN_COMMA));
   }
@@ -1810,8 +1861,10 @@ Proto *compile(const char *source, Allocator *al) {
   Proto *proto = ctx_end_compile(&ctx);
   if (ctx.parser.had_error) {
     al_free_for(al, proto);
+    ctx_destroy(&ctx);
     return NULL;
   }
 
+  ctx_destroy(&ctx);
   return proto;
 }

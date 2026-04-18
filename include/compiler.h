@@ -6,12 +6,6 @@
 #include <stdint.h>
 
 typedef enum {
-  DEFKIND_STRUCT,
-  DEFKIND_TRAIT,
-  DEFKIND_VARIANT,
-} DefinitionKind;
-
-typedef enum {
   RAW_NIL,
   RAW_BOOL,
   RAW_NUMBER,
@@ -34,7 +28,7 @@ typedef struct {
 
 typedef struct {
   String name;
-  int   arity;
+  int arity;
 } RawVariantArm;
 
 typedef struct {
@@ -51,9 +45,9 @@ typedef struct RawConstant {
     bool boolean;
     double number;
     String string;
-    Proto       *proto;
+    Proto *proto;
     RawStructDef struct_def;
-    RawTraitDef  trait_def;
+    RawTraitDef trait_def;
     RawVariantDef variant_def;
   } as;
 } RawConstant;

@@ -2,7 +2,7 @@ struct NumberRange { current end }
 trait Iterator { next has_next }
 
 impl Iterator for NumberRange {
-    fun next(self) {
+    fun next(self, Iterator) {
         var next = self.current
         self.current = self.current + 1
         return next
@@ -11,3 +11,7 @@ impl Iterator for NumberRange {
         return self.current < self.end
     }
 }
+
+var Iterator = 3
+
+fun do_work(Iterator) {}

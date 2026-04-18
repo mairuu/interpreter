@@ -10,6 +10,11 @@ typedef struct {
   int capacity;
 } String;
 
+typedef struct {
+  const char *chars;
+  int length;
+} StringView;
+
 String str_empty(void);
 // String takes ownership of chars
 String str_create(char *chars, int length);
@@ -23,6 +28,8 @@ String str_from_cstr(const char *cstr, Allocator *al);
 void str_destroy(String *str, Allocator *al);
 
 bool str_is_empty(String str);
+
+StringView sv_create(const char* chars, int length);
 
 uint32_t hash_string(const char *str, int length);
 
