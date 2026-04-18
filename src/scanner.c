@@ -180,9 +180,13 @@ static TokenType identifier_type(Scanner *s) {
         return check_keyword(s, 2, 0, "", TOKEN_IF);
       case 'm':
         return check_keyword(s, 2, 2, "pl", TOKEN_IMPL);
+      case 's':
+        return check_keyword(s, 2, 0, "", TOKEN_IS);
       }
     }
     break;
+  case 'm':
+    return check_keyword(s, 1, 4, "atch", TOKEN_MATCH);
   case 'n':
     return check_keyword(s, 1, 2, "il", TOKEN_NIL);
   case 'o':
@@ -280,7 +284,9 @@ Token scanner_next_token(Scanner *s) {
   case '!':
     return token_create(s, match(s, '=') ? TOKEN_BANG_EQUAL : TOKEN_BANG);
   case '=':
-    return token_create(s, match(s, '=') ? TOKEN_EQUAL_EQUAL : TOKEN_EQUAL);
+    return token_create(s, match(s, '=')   ? TOKEN_EQUAL_EQUAL
+                           : match(s, '>') ? TOKEN_FAT_ARROW
+                                           : TOKEN_EQUAL);
   case '<':
     return token_create(s, match(s, '=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);
   case '>':

@@ -491,6 +491,7 @@ ParseRule rules[] = {
     [TOKEN_GREATER_EQUAL] = {NULL, binary, PREC_COMPARISON},
     [TOKEN_LESS] = {NULL, binary, PREC_COMPARISON},
     [TOKEN_LESS_EQUAL] = {NULL, binary, PREC_COMPARISON},
+    [TOKEN_FAT_ARROW] = {NULL, NULL, PREC_NONE},
 
     [TOKEN_IDENTIFIER] = {variable, NULL, PREC_NONE},
     [TOKEN_STRING] = {string, NULL, PREC_NONE},
@@ -506,6 +507,9 @@ ParseRule rules[] = {
     [TOKEN_FOR] = {NULL, NULL, PREC_NONE},
     [TOKEN_FUN] = {fun, NULL, PREC_NONE},
     [TOKEN_IF] = {if_, NULL, PREC_NONE},
+    [TOKEN_IS] = {NULL, NULL, PREC_NONE},
+    [TOKEN_IMPL] = {NULL, NULL, PREC_NONE},
+    [TOKEN_MATCH] = {NULL, NULL, PREC_NONE},
     [TOKEN_NIL] = {literal, NULL, PREC_NONE},
     [TOKEN_OR] = {NULL, or_, PREC_OR},
     // [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
@@ -1030,6 +1034,73 @@ static void statement_return(CompilerContext *ctx) {
   }
 }
 
+// typedef struct {
+//   union {
+//     // PATTERN_VARIANT
+//     struct {
+//       uint8_t definition_constant;
+//       uint8_t tag;
+//       uint8_t arity;
+//     } variant;
+//     // PATTERN_TRAIT
+//     struct {
+//       uint8_t trait_constant;
+//       bool    has_binding;
+//     } trait;
+//     // PATTERN_TYPE
+//     struct {
+//       uint8_t type_tag;
+//     } type;
+//     // PATTERN_LITERAL — value already emitted as constant
+//   };
+// } ArmPattern;
+
+
+// static void ctx_compile_match_arm(CompilerContext *ctx, int *end_jumps) {
+//   ArmPattern pattern = ctx_parse_arm_pattern(ctx);
+
+//   int next_arm_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
+
+//   ctx_compile_pattern_bindings(ctx, &pattern);
+
+//   ctx_consume(ctx, TOKEN_FAT_ARROW, "expect '=>' after match arm pattern.");
+
+//   ctx_begin_scope(ctx);
+
+//   if (ctx_check(ctx, TOKEN_LEFT_BRACE)) {
+//     statement_block(ctx);
+//   } else {
+//     expression(ctx);
+//     ctx_emit_byte(ctx, OP_POP);
+//   }
+//   ctx_end_scope(ctx);
+
+//   array_push(end_jumps, ctx_emit_jump(ctx, OP_JUMP), ctx->al);
+//   ctx_patch_jump(ctx, next_arm_jump);
+// }
+
+static void statement_match(CompilerContext *ctx) {
+  // match <expr> { ... }
+  expression(ctx);
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' after 'match' expression.");
+
+  int *end_jumps;
+  array_init(end_jumps, int, ctx->al);
+
+  // while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+  //   ctx_compile_match_arm(ctx, end_jumps);
+  // }
+
+  ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after 'match' body.");
+
+  int end_jump_count = array_count(end_jumps);
+  for (int i = 0; i < end_jump_count; i++) {
+    ctx_patch_jump(ctx, end_jumps[i]);
+  }
+  array_free(end_jumps, ctx->al);
+}
+
 static void statement(CompilerContext *ctx) {
   // if (ctx_match(ctx, TOKEN_PRINT)) {
   //   statement_print(ctx);
@@ -1052,6 +1123,8 @@ static void statement(CompilerContext *ctx) {
     statement_label(ctx);
   } else if (ctx_match(ctx, TOKEN_RETURN)) {
     statement_return(ctx);
+  } else if (ctx_match(ctx, TOKEN_MATCH)) {
+    statement_match(ctx);
   } else {
     statement_expression(ctx);
   }
@@ -1334,6 +1407,11 @@ static void declaration_struct(CompilerContext *ctx) {
 #define MAX_TRAIT_METHODS 64
 
 static void declaration_trait(CompilerContext *ctx) {
+  if (ctx->current_compiler->scope_depth != 0) {
+    ctx_error_at(ctx, &ctx->parser.current,
+                 "can't declare a trait inside another block.");
+  }
+
   ctx_consume(ctx, TOKEN_IDENTIFIER, "expect trait name.");
   ctx_declare_variable(ctx);
   uint8_t trait_name_constant =
