@@ -38,18 +38,12 @@ typedef enum {
                  // slot_idx
   OP_CLOSE_UPVALUE,
 
-  OP_STRUCT,
-  OP_STRUCT_FIELD,
+  OP_IMPL,        // pops trait_def + struct_def → pushes empty ObjImpl
+  OP_IMPL_METHOD, // name_const, pops closure → fills slot on ObjImpl
+  OP_IMPL_COMMIT, // pops ObjImpl, registers it
 
-  OP_TRAIT,        // name_const > pushes ObjectTraitDefinition
-  OP_TRAIT_METHOD, // name_const > registers method slot on top-of-stack trait
-  OP_CAST_TRAIT,  // casts trait object on second-to-top to trait on top, leaves
-                  // trait object on top
-  OP_CALL_METHOD, // name_const, arg_count > calls method on trait object
-
-  OP_IMPL,        // pushes ObjectImpl (empty)
-  OP_IMPL_METHOD, // slot_idx, closure > fills method slot on top-of-stack impl
-  OP_IMPL_COMMIT, // pops ObjectImpl, registers it on its struct_def
+  OP_CAST_TRAIT,
+  OP_CALL_METHOD,
 
   OP_CALL,
   OP_RETURN,

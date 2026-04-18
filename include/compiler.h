@@ -1,9 +1,47 @@
 #pragma once
 
 #include "memory.h"
+#include "string_utils.h"
+
 #include <stdint.h>
 
-typedef enum { RAW_NIL, RAW_BOOL, RAW_NUMBER, RAW_STRING, RAW_FUNC } RawType;
+typedef enum {
+  DEFKIND_STRUCT,
+  DEFKIND_TRAIT,
+  DEFKIND_VARIANT,
+} DefinitionKind;
+
+typedef enum {
+  RAW_NIL,
+  RAW_BOOL,
+  RAW_NUMBER,
+  RAW_STRING,
+  RAW_FUNC,
+  RAW_STRUCT_DEF,
+  RAW_TRAIT_DEF,
+  RAW_VARIANT_DEF,
+} RawType;
+
+typedef struct {
+  String name;
+  String *fields;
+} RawStructDef;
+
+typedef struct {
+  String name;
+  String *methods;
+} RawTraitDef;
+
+typedef struct {
+  String name;
+  int   arity;
+} RawVariantArm;
+
+typedef struct {
+  String name;
+  RawVariantArm *arms;
+  int arm_count;
+} RawVariantDef;
 
 typedef struct Proto Proto;
 
@@ -12,12 +50,11 @@ typedef struct RawConstant {
   union {
     bool boolean;
     double number;
-    struct {
-      char *chars;
-      int length;
-      int capacity;
-    } string;
-    Proto *proto;
+    String string;
+    Proto       *proto;
+    RawStructDef struct_def;
+    RawTraitDef  trait_def;
+    RawVariantDef variant_def;
   } as;
 } RawConstant;
 
@@ -36,7 +73,7 @@ typedef enum { PROTO_SCRIPT, PROTO_FUNCTION, PROTO_METHOD } ProtoType;
 // function prototype.
 typedef struct Proto {
   ProtoType type;
-  char *name;
+  String name;
 
   int arity;
   int upvalue_count;

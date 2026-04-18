@@ -11,15 +11,16 @@
 #include "memory.h"
 #include "opcode.h"
 #include "scanner.h"
+#include "string_utils.h"
 
 #define MAX_ASSIGNMENTS                                                        \
   8 // maximum number of variables in a multiple assignment statement, e.g. `var
     // a, b, c = 1, 2, 3`
 #define UINT8_COUNT UINT8_MAX + 1
 
-void proto_init(Proto *proto, ProtoType type, char *name, Allocator *al) {
+void proto_init(Proto *proto, ProtoType type, Allocator *al) {
   proto->type = type;
-  proto->name = name;
+  proto->name = str_empty();
   proto->arity = 0;
   proto->upvalue_count = 0;
   proto->code = array_new(al, uint8_t);
@@ -28,8 +29,40 @@ void proto_init(Proto *proto, ProtoType type, char *name, Allocator *al) {
 }
 
 static void constant_destory(RawConstant constant, Allocator *al) {
-  if (constant.type == RAW_STRING && constant.as.string.chars != NULL) {
-    al_free(al, constant.as.string.chars, constant.as.string.capacity + 1);
+  switch (constant.type) {
+  case RAW_STRING:
+    if (constant.as.string.chars != NULL) {
+      al_free(al, constant.as.string.chars, constant.as.string.capacity + 1);
+    }
+    break;
+  case RAW_NIL:
+    break;
+  case RAW_BOOL:
+    break;
+  case RAW_NUMBER:
+    break;
+  case RAW_FUNC:
+    break;
+  case RAW_STRUCT_DEF: {
+    int field_count = array_count(constant.as.struct_def.fields);
+    for (int i = 0; i < field_count; i++) {
+      str_destroy(&constant.as.struct_def.fields[i], al);
+    }
+    array_free(constant.as.struct_def.fields, al);
+    str_destroy(&constant.as.struct_def.name, al);
+    break;
+  }
+  case RAW_TRAIT_DEF: {
+    int method_count = array_count(constant.as.trait_def.methods);
+    for (int i = 0; i < method_count; i++) {
+      str_destroy(&constant.as.trait_def.methods[i], al);
+    }
+    str_destroy(&constant.as.trait_def.name, al);
+    array_free(constant.as.trait_def.methods, al);
+    break;
+  }
+  case RAW_VARIANT_DEF:
+    break;
   }
 }
 
@@ -39,9 +72,7 @@ void proto_destroy(Proto *proto, Allocator *al) {
     RawConstant constant = proto->constants[i];
     constant_destory(constant, al);
   }
-  if (proto->name != NULL) {
-    al_free(al, proto->name, strlen(proto->name) + 1);
-  }
+  str_destroy(&proto->name, al);
   array_free(proto->code, al);
   array_free(proto->constants, al);
   array_free(proto->lines, al);
@@ -164,67 +195,18 @@ static void ctx_init(CompilerContext *ctx, const char *source, Allocator *al) {
 //   }
 // }
 
-static char *copy_string(const char *str, int length, Allocator *al) {
-  char *copy = al_alloc(al, length + 1);
-  memcpy(copy, str, length);
-  copy[length] = '\0';
-  return copy;
-}
-
-static char *copy_escaped_string(const char *str, int length, int *out_length,
-                                 int *out_capacity, Allocator *al) {
-  int capacity = length;
-  char *chars = al_alloc(al, capacity + 1);
-  int j = 0;
-  for (int i = 0; i < length; i++) {
-    if (str[i] == '\\' && i + 1 < length) {
-      i++;
-      switch (str[i]) {
-      case 'n':
-        chars[j++] = '\n';
-        break;
-      case 'r':
-        chars[j++] = '\r';
-        break;
-      case 't':
-        chars[j++] = '\t';
-        break;
-      case '\\':
-        chars[j++] = '\\';
-        break;
-      case '"':
-        chars[j++] = '"';
-        break;
-      default:
-        chars[j++] = str[i];
-        break;
-      }
-    } else {
-      chars[j++] = str[i];
-    }
-  }
-  chars[j] = '\0';
-  if (out_length) {
-    *out_length = j;
-  }
-  if (out_capacity) {
-    *out_capacity = capacity;
-  }
-  return chars;
-}
-
 static void ctx_begin_compile(CompilerContext *ctx, Compiler *compiler,
                               ProtoType type) {
   Proto *proto = al_alloc_for(ctx->al, Proto);
-  proto_init(proto, type, NULL, ctx->al);
+  proto_init(proto, type, ctx->al);
   compiler_init(compiler, proto);
 
   compiler->enclosing = ctx->current_compiler;
   ctx->current_compiler = compiler;
 
   if (type != PROTO_SCRIPT && ctx->parser.previous.type == TOKEN_IDENTIFIER) {
-    proto->name = copy_string(ctx->parser.previous.start,
-                              ctx->parser.previous.length, ctx->al);
+    proto->name = str_from_str(ctx->parser.previous.start,
+                               ctx->parser.previous.length, ctx->al);
   }
 }
 
@@ -319,6 +301,16 @@ static bool ctx_match(CompilerContext *ctx, TokenType type) {
   return true;
 }
 
+static Token ctx_consume_identifier(CompilerContext *ctx, const char *err_msg) {
+  if (ctx_check(ctx, TOKEN_IDENTIFIER)) {
+    ctx_advance(ctx);
+    return ctx->parser.previous;
+  }
+
+  ctx_error_at(ctx, &ctx->parser.current, err_msg);
+  return (Token){0};
+}
+
 // expect the current token to be of the given type and consume it, otherwise
 // report an error with the given message
 static bool ctx_consume(CompilerContext *ctx, TokenType type,
@@ -377,6 +369,27 @@ static uint8_t ctx_make_constant(CompilerContext *ctx, RawConstant value) {
   return 0;
 }
 
+static int ctx_add_raw_constant_struct(CompilerContext *ctx, RawStructDef def) {
+  return ctx_make_constant(
+      ctx, (RawConstant){.type = RAW_STRUCT_DEF, .as.struct_def = def});
+}
+
+static int ctx_add_raw_constant_trait(CompilerContext *ctx, RawTraitDef def) {
+  return ctx_make_constant(
+      ctx, (RawConstant){.type = RAW_TRAIT_DEF, .as.trait_def = def});
+}
+
+// register a compile-time symbol to table entry that says "this name is a
+// struct/trait/variant definition, not a value
+static void ctx_register_definition(CompilerContext *ctx, Token name,
+                                    DefinitionKind kind, int constant_index) {
+  (void)ctx;
+  (void)name;
+  (void)kind;
+  (void)constant_index;
+  // todo: add constant table into compiler
+}
+
 static void ctx_emit_constant(CompilerContext *ctx, RawConstant value) {
   ctx_emit_bytes(ctx, OP_CONSTANT, ctx_make_constant(ctx, value));
 }
@@ -419,6 +432,8 @@ static void ctx_synchronize(CompilerContext *ctx) {
     // case TOKEN_PRINT:
     case TOKEN_RETURN:
     case TOKEN_STRUCT:
+    case TOKEN_TRAIT:
+    case TOKEN_IMPL:
       return;
     default:
       break;
@@ -1055,7 +1070,6 @@ static void statement_return(CompilerContext *ctx) {
 //   };
 // } ArmPattern;
 
-
 // static void ctx_compile_match_arm(CompilerContext *ctx, int *end_jumps) {
 //   ArmPattern pattern = ctx_parse_arm_pattern(ctx);
 
@@ -1362,17 +1376,22 @@ static void declaration_fun(CompilerContext *ctx) {
 #define STRINGIFY(x) #x
 
 static void declaration_struct(CompilerContext *ctx) {
-  ctx_consume(ctx, TOKEN_IDENTIFIER, "expect struct name.");
-  ctx_declare_variable(ctx);
-  uint8_t struct_name_constant =
-      ctx_identifier_constant(ctx, &ctx->parser.previous);
-  ctx_emit_bytes(ctx, OP_STRUCT, struct_name_constant);
+  if (ctx->current_compiler->scope_depth != 0) {
+    ctx_error_at(ctx, &ctx->parser.current,
+                 "structs must be declared at top level.");
+  }
+
+  Token name = ctx_consume_identifier(ctx, "expect struct name.");
+  int struct_name_constant = ctx_identifier_constant(ctx, &name);
+
+  RawStructDef def;
+  def.name = str_from_str(name.start, name.length, ctx->al);
+  def.fields = NULL;
 
   ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before struct body.");
 
   Token field_names[MAX_STRUCT_FIELDS];
   int field_count = 0;
-
   while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
     if (field_count >= MAX_STRUCT_FIELDS) {
       ctx_error_at(ctx, &ctx->parser.current,
@@ -1382,26 +1401,32 @@ static void declaration_struct(CompilerContext *ctx) {
         ctx_advance(ctx);
       break;
     }
-
-    ctx_consume(ctx, TOKEN_IDENTIFIER, "expect field name in struct body.");
-
+    Token field_name =
+        ctx_consume_identifier(ctx, "expect field name in struct body.");
     for (int i = 0; i < field_count; i++) {
-      if (identifier_equals(&ctx->parser.previous, &field_names[i])) {
+      if (identifier_equals(&field_name, &field_names[i])) {
         DIAGNOSTIC(ctx, "duplicate field name in struct body.",
                    {field_names[i], "first declared here"},
-                   {ctx->parser.previous, "re-declared here"});
+                   {field_name, "re-declared here"});
       }
     }
-
-    field_names[field_count++] = ctx->parser.previous;
-    uint8_t field_name_constant =
-        ctx_identifier_constant(ctx, &ctx->parser.previous);
-    ctx_emit_bytes(ctx, OP_STRUCT_FIELD, field_name_constant);
+    field_names[field_count++] = field_name;
   }
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after struct body.");
 
-  ctx_define_variable(ctx, struct_name_constant);
+  array_reserve(def.fields, field_count, ctx->al);
+  for (int i = 0; i < field_count; i++) {
+    String field =
+        str_from_str(field_names[i].start, field_names[i].length, ctx->al);
+    array_push(def.fields, field, ctx->al);
+  }
+
+  int const_idx = ctx_add_raw_constant_struct(ctx, def);
+  ctx_register_definition(ctx, name, DEFKIND_STRUCT, const_idx);
+
+  ctx_emit_bytes(ctx, OP_CONSTANT, (uint8_t)const_idx, OP_DEFINE_GLOBAL,
+                 *(uint8_t *)&struct_name_constant);
 }
 
 #define MAX_TRAIT_METHODS 64
@@ -1409,22 +1434,23 @@ static void declaration_struct(CompilerContext *ctx) {
 static void declaration_trait(CompilerContext *ctx) {
   if (ctx->current_compiler->scope_depth != 0) {
     ctx_error_at(ctx, &ctx->parser.current,
-                 "can't declare a trait inside another block.");
+                 "traits must be declared at top level.");
   }
 
-  ctx_consume(ctx, TOKEN_IDENTIFIER, "expect trait name.");
-  ctx_declare_variable(ctx);
-  uint8_t trait_name_constant =
-      ctx_identifier_constant(ctx, &ctx->parser.previous);
-  ctx_emit_bytes(ctx, OP_TRAIT, trait_name_constant);
+  Token name = ctx_consume_identifier(ctx, "expect trait name.");
+  int trait_name_constant = ctx_identifier_constant(ctx, &name);
+
+  RawTraitDef def;
+  def.name = str_from_str(name.start, name.length, ctx->al);
+  def.methods = NULL;
+
+  Token method_names[MAX_TRAIT_METHODS];
+  int method_count = 0;
 
   ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before trait body.");
 
-  Token method_names[MAX_TRAIT_METHODS];
-  int method_name = 0;
-
   while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
-    if (method_name >= MAX_TRAIT_METHODS) {
+    if (method_count >= MAX_TRAIT_METHODS) {
       ctx_error_at(ctx, &ctx->parser.current,
                    "can't have more than " STRINGIFY(
                        MAX_TRAIT_METHODS) " methods in a trait.");
@@ -1432,29 +1458,40 @@ static void declaration_trait(CompilerContext *ctx) {
         ctx_advance(ctx);
       break;
     }
-
-    ctx_consume(ctx, TOKEN_IDENTIFIER, "expect method name.");
-
-    for (int i = 0; i < method_name; i++) {
-      if (identifier_equals(&ctx->parser.previous, &method_names[i])) {
+    Token method_name_token =
+        ctx_consume_identifier(ctx, "expect method name in trait body.");
+    for (int i = 0; i < method_count; i++) {
+      if (identifier_equals(&method_name_token, &method_names[i])) {
         DIAGNOSTIC(ctx, "duplicate method name in trait body.",
                    {method_names[i], "first declared here"},
-                   {ctx->parser.previous, "re-declared here"});
+                   {method_name_token, "re-declared here"});
       }
     }
-
-    method_names[method_name++] = ctx->parser.previous;
-    uint8_t field_name_constant =
-        ctx_identifier_constant(ctx, &ctx->parser.previous);
-    ctx_emit_bytes(ctx, OP_TRAIT_METHOD, field_name_constant);
+    method_names[method_count++] = method_name_token;
   }
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after trait body.");
 
-  ctx_define_variable(ctx, trait_name_constant);
+  array_reserve(def.methods, method_count, ctx->al);
+  for (int i = 0; i < method_count; i++) {
+    String method =
+        str_from_str(method_names[i].start, method_names[i].length, ctx->al);
+    array_push(def.methods, method, ctx->al);
+  }
+
+  int const_idx = ctx_add_raw_constant_trait(ctx, def);
+  ctx_register_definition(ctx, name, DEFKIND_TRAIT, const_idx);
+
+  ctx_emit_bytes(ctx, OP_CONSTANT, (uint8_t)const_idx, OP_DEFINE_GLOBAL,
+                 *(uint8_t *)&trait_name_constant);
 }
 
 static void declaration_impl(CompilerContext *ctx) {
+  if (ctx->current_compiler->scope_depth != 0) {
+    ctx_error_at(ctx, &ctx->parser.current,
+                 "impls must be declared at top level.");
+  }
+
   ctx_consume(ctx, TOKEN_IDENTIFIER, "expect struct name after 'impl'.");
   ctx_named_variable(ctx, ctx->parser.previous, false);
   ctx_consume(ctx, TOKEN_FOR,

@@ -1,1 +1,13 @@
-match 3 {}
+struct NumberRange { current end }
+trait Iterator { next has_next }
+
+impl Iterator for NumberRange {
+    fun next(self) {
+        var next = self.current
+        self.current = self.current + 1
+        return next
+    }
+    fun has_next(self) {
+        return self.current < self.end
+    }
+}

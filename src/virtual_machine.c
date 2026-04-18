@@ -8,6 +8,7 @@
 #include "memory.h"
 #include "object.h"
 #include "opcode.h"
+#include "string_utils.h"
 #include "value.h"
 
 #include <assert.h>
@@ -35,22 +36,6 @@ static inline void vm_push(VirtualMachine *vm, Value value);
 static inline Value vm_pop(VirtualMachine *vm);
 static inline Value vm_peek(VirtualMachine *vm, int distance);
 
-static uint32_t hash_string(const char *str, int length) {
-  uint32_t hash = 2166136261u;
-  for (int i = 0; i < length; i++) {
-    hash ^= (uint8_t)str[i];
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
-static char *copy_string(const char *str, int length, Allocator *al) {
-  char *copy = al_alloc(al, length + 1);
-  memcpy(copy, str, length);
-  copy[length] = '\0';
-  return copy;
-}
-
 static void vm_reset_stack(VirtualMachine *vm) {
   vm->frame_count = 0;
   vm->stack.top = vm->stack.values;
@@ -61,6 +46,15 @@ void vm_track_object(VirtualMachine *vm, Object *object) {
   assert(object->next == NULL && "object should not be tracked yet");
   object->next = vm->objects;
   vm->objects = object;
+}
+
+bool vm_track_object_if_needed(VirtualMachine *vm, Object *object) {
+  assert(object != NULL && "cannot track NULL object");
+  if (object->next == NULL) {
+    vm_track_object(vm, object);
+    return true;
+  }
+  return false;
 }
 
 ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
@@ -153,28 +147,37 @@ static uint32_t vm_next_trait_id(VirtualMachine *vm) {
   return vm->next_trait_id++;
 }
 
-ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
-                               int length) {
+// intern string without tracking
+static ObjectString *_vm_intern_string_untrack(VirtualMachine *vm,
+                                               const char *chars, int length) {
   uint32_t hash = hash_string(chars, length);
 
   ObjectString temp_str = obj_string_create(chars, length, hash);
   Value *existing = ht_get(&vm->strings, OBJECT_VALUE(&temp_str));
+
   if (existing != NULL) {
     return AS_STRING(*existing);
   }
 
   char *copy = copy_string(chars, length, &vm->al);
-  ObjectString *string = vm_new_string(vm, copy, length, hash);
+  ObjectString *string = obj_string_new(&vm->al, copy, length, hash);
   string->is_interned = true;
   if (string == NULL) {
     return NULL;
   }
 
-  Value interned_value = OBJECT_VALUE(string);
-  vm_push(vm, interned_value);
-  ht_put(&vm->strings, interned_value, interned_value, &vm->al);
+  vm_push(vm, OBJECT_VALUE(string));
+  ht_put(&vm->strings, OBJECT_VALUE(string), OBJECT_VALUE(string), &vm->al);
   vm_pop(vm);
+  return string;
+}
 
+ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
+                               int length) {
+  ObjectString *string = _vm_intern_string_untrack(vm, chars, length);
+  if (string != NULL) {
+    vm_track_object(vm, &string->object);
+  }
   return string;
 }
 
@@ -194,6 +197,7 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto);
 static Value load_constant(ConstantLoader *loader, Allocator *al,
                            const RawConstant *raw_constant) {
   (void)al;
+  VirtualMachine *vm = (VirtualMachine *)loader->ctx;
 
   switch (raw_constant->type) {
   case RAW_NIL:
@@ -203,20 +207,79 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
   case RAW_NUMBER:
     return NUMBER_VALUE(raw_constant->as.number);
   case RAW_STRING: {
-    ObjectString *interned =
-        vm_intern_string(loader->ctx, raw_constant->as.string.chars,
-                         raw_constant->as.string.length);
+    ObjectString *interned = _vm_intern_string_untrack(
+        vm, raw_constant->as.string.chars, raw_constant->as.string.length);
     if (interned == NULL) {
       assert(false && "out of memory for string constant");
       return NIL_VALUE;
     }
+    vm_track_object_if_needed(vm, &interned->object);
     return OBJECT_VALUE(interned);
   }
   case RAW_FUNC: {
     Proto *proto = raw_constant->as.proto;
-    ObjectFunction *function = vm_load_proto(loader->ctx, proto);
+    ObjectFunction *function = vm_load_proto(vm, proto);
     return OBJECT_VALUE(function);
   }
+  case RAW_STRUCT_DEF:
+    const RawStructDef *raw_def = &raw_constant->as.struct_def;
+
+    uint16_t definition_id = vm_next_definition_id(vm);
+    ObjectString *name = _vm_intern_string_untrack(vm, raw_def->name.chars,
+                                                   raw_def->name.length);
+    ObjectStructDefinition *struct_def =
+        obj_struct_definition_new(&vm->al, name, definition_id);
+
+    int field_count = array_count(raw_def->fields);
+    for (int i = 0; i < field_count; i++) {
+      ObjectString *field_name = _vm_intern_string_untrack(
+          vm, raw_def->fields[i].chars, raw_def->fields[i].length);
+      ht_put(&struct_def->fields, OBJECT_VALUE(field_name), NUMBER_VALUE(i),
+             &vm->al);
+    }
+
+    vm_track_object_if_needed(vm, &name->object);
+    vm_track_object(vm, &struct_def->object);
+
+    HashTableIterator it;
+    hti_init(&it, &struct_def->fields);
+    while (hti_next(&it)) {
+      assert(IS_STRING(*it.key) && "keys in string table should be strings");
+      vm_track_object_if_needed(vm, AS_OBJECT(*it.key));
+    }
+
+    return OBJECT_VALUE(struct_def);
+  case RAW_TRAIT_DEF: {
+    const RawTraitDef *raw_def = &raw_constant->as.trait_def;
+
+    uint16_t trait_id = vm_next_trait_id(vm);
+    ObjectString *name = _vm_intern_string_untrack(vm, raw_def->name.chars,
+                                                   raw_def->name.length);
+    ObjectTraitDefinition *trait_def =
+        obj_trait_definition_new(&vm->al, name, trait_id);
+
+    int method_count = array_count(raw_def->methods);
+    for (int i = 0; i < method_count; i++) {
+      ObjectString *method_name = _vm_intern_string_untrack(
+          vm, raw_def->methods[i].chars, raw_def->methods[i].length);
+      array_push(trait_def->method_names, method_name, &vm->al);
+    }
+
+    vm_track_object_if_needed(vm, &name->object);
+    vm_track_object(vm, &trait_def->object);
+
+    for (int i = 0; i < method_count; i++) {
+      assert(IS_STRING(OBJECT_VALUE(trait_def->method_names[i])) &&
+             "method names in trait definition should be strings");
+      vm_track_object_if_needed(
+          vm, AS_OBJECT(OBJECT_VALUE(trait_def->method_names[i])));
+    }
+    return OBJECT_VALUE(trait_def);
+  }
+  case RAW_VARIANT_DEF:
+    break;
+  default:
+    assert(false && "invalid constant type");
   }
 
   return NIL_VALUE;
@@ -233,8 +296,10 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
   chunk_load_from_proto(&function->chunk, proto, &loader, &vm->al);
   function->upvalue_count = proto->upvalue_count;
 
-  if (proto->name != NULL) {
-    function->name = vm_intern_string(vm, proto->name, strlen(proto->name));
+  if (!str_is_empty(proto->name)) {
+    function->name =
+        _vm_intern_string_untrack(vm, proto->name.chars, proto->name.length);
+    vm_track_object_if_needed(vm, &function->name->object);
   }
 
 #ifdef DEBUG_PRINT_CODE
@@ -868,47 +933,6 @@ static bool vm_run(VirtualMachine *vm) {
       break;
     }
 
-    case OP_STRUCT: {
-      uint16_t next_definition_id = vm_next_definition_id(vm);
-      if (next_definition_id >= UINT16_MAX) {
-        vm_runtime_error(vm, "too many struct definitions", UINT16_MAX);
-        break;
-      }
-
-      ObjectString *name = READ_STRING();
-      ObjectStructDefinition *def =
-          vm_new_struct_definition(vm, name, next_definition_id++);
-
-      vm_push(vm, OBJECT_VALUE(def));
-      break;
-    }
-    case OP_STRUCT_FIELD: {
-      ObjectString *field_name = READ_STRING();
-      ObjectStructDefinition *def = AS_STRUCT_DEFINITION(vm_peek(vm, 0));
-      ht_put(&def->fields, OBJECT_VALUE(field_name),
-             NUMBER_VALUE(def->fields.count), &vm->al);
-      break;
-    }
-
-    case OP_TRAIT: {
-      uint16_t next_trait_id = vm_next_trait_id(vm);
-      if (next_trait_id >= UINT16_MAX) {
-        vm_runtime_error(vm, "too many trait definitions", UINT16_MAX);
-        break;
-      }
-
-      ObjectString *name = READ_STRING();
-      ObjectTraitDefinition *trait =
-          vm_new_trait_definition(vm, name, next_trait_id++);
-      vm_push(vm, OBJECT_VALUE(trait));
-      break;
-    }
-    case OP_TRAIT_METHOD: {
-      ObjectString *method_name = READ_STRING();
-      ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(vm_peek(vm, 0));
-      array_push(trait->method_names, method_name, &vm->al);
-      break;
-    }
     case OP_CAST_TRAIT: {
       Value trait_val = vm_peek(vm, 0);
       if (!IS_TRAIT_DEFINITION(trait_val)) {

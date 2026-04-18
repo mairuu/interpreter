@@ -178,15 +178,15 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_CLOSE_UPVALUE:
     return simple_instruction("OP_CLOSE_UPVALUE", offset);
 
-  case OP_STRUCT:
-    return constant_instruction("OP_STRUCT", chunk, offset);
-  case OP_STRUCT_FIELD:
-    return constant_instruction("OP_STRUCT_FIELD", chunk, offset);
+  // case OP_STRUCT:
+  //   return constant_instruction("OP_STRUCT", chunk, offset);
+  // case OP_STRUCT_FIELD:
+  //   return constant_instruction("OP_STRUCT_FIELD", chunk, offset);
 
-  case OP_TRAIT:
-    return constant_instruction("OP_TRAIT", chunk, offset);
-  case OP_TRAIT_METHOD:
-    return constant_instruction("OP_TRAIT_METHOD", chunk, offset);
+  // case OP_TRAIT:
+  //   return constant_instruction("OP_TRAIT", chunk, offset);
+  // case OP_TRAIT_METHOD:
+  //   return constant_instruction("OP_TRAIT_METHOD", chunk, offset);
   case OP_CAST_TRAIT:
     return simple_instruction("OP_CAST_TRAIT", offset);
   case OP_CALL_METHOD:
