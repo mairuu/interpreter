@@ -1,5 +1,6 @@
 #include "builtins.h"
 
+#include <complex.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +8,7 @@
 
 #include "garbage_collector.h"
 #include "memory.h"
+#include "object.h"
 #include "virtual_machine.h"
 
 static uint32_t hash_string(const char *str, int length) {
@@ -40,6 +42,7 @@ static Value native_print(VirtualMachine *vm, int arg_count, Value *args) {
   static char buf[1024];
   for (int i = 0; i < arg_count; i++) {
     value_print(buf, sizeof(buf), args[i]);
+    printf("%s", buf);
     if (i < arg_count - 1) {
       printf(" ");
     }
@@ -198,6 +201,7 @@ void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm) {
       {"println", native_println},   {"type", native_type},
       {"number", native_number},     {"str", native_str},
       {"readline", native_readline}, {"panic", native_panic},
+
   };
 
   int count = sizeof(stdlib) / sizeof(stdlib[0]);

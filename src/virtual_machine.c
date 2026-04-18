@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdnoreturn.h>
 #include <string.h>
 #include <time.h>
 
@@ -34,12 +35,28 @@ static inline void vm_push(VirtualMachine *vm, Value value);
 static inline Value vm_pop(VirtualMachine *vm);
 static inline Value vm_peek(VirtualMachine *vm, int distance);
 
+static uint32_t hash_string(const char *str, int length) {
+  uint32_t hash = 2166136261u;
+  for (int i = 0; i < length; i++) {
+    hash ^= (uint8_t)str[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+static char *copy_string(const char *str, int length, Allocator *al) {
+  char *copy = al_alloc(al, length + 1);
+  memcpy(copy, str, length);
+  copy[length] = '\0';
+  return copy;
+}
+
 static void vm_reset_stack(VirtualMachine *vm) {
   vm->frame_count = 0;
   vm->stack.top = vm->stack.values;
 }
 
-static void vm_track_object(VirtualMachine *vm, Object *object) {
+void vm_track_object(VirtualMachine *vm, Object *object) {
   assert(object != NULL && "cannot track NULL object");
   assert(object->next == NULL && "object should not be tracked yet");
   object->next = vm->objects;
@@ -71,7 +88,7 @@ ObjectClosure *vm_new_closure(VirtualMachine *vm, ObjectFunction *function) {
   return closure;
 }
 
-ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function) {
+ObjectNative *vm_new_native(VirtualMachine *vm, NativeFunc function) {
   ObjectNative *native = obj_native_new(&vm->al, function);
   vm_track_object(vm, &native->object);
   return native;
@@ -128,20 +145,12 @@ ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
 //   return bound_method;
 // }
 
-static uint32_t hash_string(const char *str, int length) {
-  uint32_t hash = 2166136261u;
-  for (int i = 0; i < length; i++) {
-    hash ^= (uint8_t)str[i];
-    hash *= 16777619u;
-  }
-  return hash;
+static uint32_t vm_next_definition_id(VirtualMachine *vm) {
+  return vm->next_definition_id++;
 }
 
-static char *copy_string(const char *str, int length, Allocator *al) {
-  char *copy = al_alloc(al, length + 1);
-  memcpy(copy, str, length);
-  copy[length] = '\0';
-  return copy;
+static uint32_t vm_next_trait_id(VirtualMachine *vm) {
+  return vm->next_trait_id++;
 }
 
 ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
@@ -170,7 +179,7 @@ ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
 }
 
 void vm_define_native(VirtualMachine *vm, const char *name,
-                      NavtiveFunc function) {
+                      NativeFunc function) {
   Value string = OBJECT_VALUE(vm_intern_string(vm, name, strlen(name)));
   vm_push(vm, string);
   Value native = OBJECT_VALUE(vm_new_native(vm, function));
@@ -422,28 +431,34 @@ static bool vm_call_struct_constructor(VirtualMachine *vm,
   return true;
 }
 
+static bool vm_call_object(VirtualMachine *vm, Object *callee, int arg_count) {
+  switch (callee->type) {
+  case OBJECT_FUNCTION: {
+    return vm_call(vm, (void *)callee, arg_count);
+  }
+  case OBJECT_CLOSURE: {
+    return vm_call_closure(vm, (void *)callee, arg_count);
+  }
+  case OBJECT_NATIVE: {
+    ObjectNative *native = (ObjectNative *)callee;
+    Value result = native->function(vm, arg_count, vm->stack.top - arg_count);
+    vm->stack.top -= arg_count + 1;
+    vm_push(vm, result);
+    return true;
+  }
+  case OBJECT_STRUCT_DEFINITION:
+    return vm_call_struct_constructor(vm, (void *)callee, arg_count);
+  default:
+    break; // non-callable object type
+  }
+
+  vm_runtime_error(vm, "callee is not callable");
+  return false;
+}
+
 static bool vm_call_value(VirtualMachine *vm, Value callee, int arg_count) {
   if (IS_OBJECT(callee)) {
-    switch (AS_OBJECT(callee)->type) {
-    case OBJECT_FUNCTION: {
-      return vm_call(vm, AS_FUNCTION(callee), arg_count);
-    }
-    case OBJECT_CLOSURE: {
-      return vm_call_closure(vm, AS_CLOSURE(callee), arg_count);
-    }
-    case OBJECT_NATIVE: {
-      ObjectNative *native = AS_NATIVE(callee);
-      Value result = native->function(vm, arg_count, vm->stack.top - arg_count);
-      vm->stack.top -= arg_count + 1;
-      vm_push(vm, result);
-      return true;
-    }
-    case OBJECT_STRUCT_DEFINITION:
-      return vm_call_struct_constructor(vm, AS_STRUCT_DEFINITION(callee),
-                                        arg_count);
-    default:
-      break; // non-callable object type
-    }
+    return vm_call_object(vm, AS_OBJECT(callee), arg_count);
   }
 
   vm_runtime_error(vm, "callee is not callable");
@@ -456,6 +471,9 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   vm->al = al;
   vm->objects = NULL;
 
+  vm->next_definition_id = 1;
+  vm->next_trait_id = 1;
+
   ht_init(&vm->strings, &vm->al);
   ht_init(&vm->globals, &vm->al);
 
@@ -467,7 +485,6 @@ void vm_init(VirtualMachine *vm, Allocator al) {
 
 void vm_destroy(VirtualMachine *vm) {
   vm_reset_stack(vm);
-
   builtins_destroy(&vm->builtins, &vm->al);
 
   ht_destroy(&vm->globals, &vm->al);
@@ -559,11 +576,10 @@ static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
   return NULL;
 }
 
-static ObjectClosure *vm_method_reference(VirtualMachine *vm, Value receiver,
-                                          uint8_t *ip, Chunk *chunk,
-                                          uint8_t name_idx,
-                                          uint16_t cached_trait_id,
-                                          uint8_t cached_slot) {
+static Object *vm_method_reference(VirtualMachine *vm, Value receiver,
+                                   uint8_t *ip, Chunk *chunk, uint8_t name_idx,
+                                   uint16_t cached_trait_id,
+                                   uint8_t cached_slot) {
   if (!IS_TRAIT_OBJECT(receiver)) {
     vm_runtime_error(vm, "receiver is not a trait object");
     return NULL;
@@ -853,14 +869,9 @@ static bool vm_run(VirtualMachine *vm) {
     }
 
     case OP_STRUCT: {
-      // quick hack
-      static uint16_t next_definition_id = 1;
-
-      if (next_definition_id == UINT16_MAX) {
-        vm_runtime_error(vm, "too many struct definitions (max %d)",
-                         UINT16_MAX);
-        // this thing is not recoverable
-        exit(1);
+      uint16_t next_definition_id = vm_next_definition_id(vm);
+      if (next_definition_id >= UINT16_MAX) {
+        vm_runtime_error(vm, "too many struct definitions", UINT16_MAX);
         break;
       }
 
@@ -880,7 +891,12 @@ static bool vm_run(VirtualMachine *vm) {
     }
 
     case OP_TRAIT: {
-      static uint16_t next_trait_id = 1;
+      uint16_t next_trait_id = vm_next_trait_id(vm);
+      if (next_trait_id >= UINT16_MAX) {
+        vm_runtime_error(vm, "too many trait definitions", UINT16_MAX);
+        break;
+      }
+
       ObjectString *name = READ_STRING();
       ObjectTraitDefinition *trait =
           vm_new_trait_definition(vm, name, next_trait_id++);
@@ -920,10 +936,10 @@ static bool vm_run(VirtualMachine *vm) {
       frame->ip = ip;
 
       Value receiver = vm_peek(vm, arg_count);
-      ObjectClosure *method =
+      Object *method =
           vm_method_reference(vm, receiver, ip, &frame->function->chunk,
                               name_idx, cached_trait, cached_slot);
-      if (method && vm_call_closure(vm, method, arg_count)) {
+      if (method && vm_call_object(vm, method, arg_count)) {
         frame = &vm->frames[vm->frame_count - 1];
         ip = frame->ip;
       }
@@ -960,6 +976,7 @@ static bool vm_run(VirtualMachine *vm) {
     case OP_IMPL_METHOD: {
       Value method_val = vm_peek(vm, 0);
       if (IS_FUNCTION(method_val)) {
+        // todo: we do not need to normalize anymore
         // normalize method to closure
         ObjectClosure *closure = vm_new_closure(vm, AS_FUNCTION(method_val));
         method_val = OBJECT_VALUE(closure);
@@ -980,7 +997,7 @@ static bool vm_run(VirtualMachine *vm) {
         break;
       }
 
-      impl->methods[slot] = method;
+      impl->methods[slot] = (Object *)method;
       vm_pop(vm); // pop the method
       break;
     }

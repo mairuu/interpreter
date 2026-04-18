@@ -53,7 +53,7 @@ int obj_print(char *buf, size_t size, Object *obj) {
                     ((ObjectTraitObject *)obj)->impl->struct_def->name->chars);
     break;
   case OBJECT_BOUND_METHOD:
-    return snprintf(buf, size, "<bound method of %s>",
+    return snprintf(buf, size, "<fn %s>",
                     ((ObjectBoundMethod *)obj)->method->function->name->chars);
     break;
   default:
@@ -184,7 +184,7 @@ void obj_closure_free(ObjectClosure **obj, Allocator *al) {
   *obj = NULL;
 }
 
-ObjectNative *obj_native_new(Allocator *al, NavtiveFunc function) {
+ObjectNative *obj_native_new(Allocator *al, NativeFunc function) {
   ObjectNative *native = OBJECT_NEW(al, ObjectNative, OBJECT_NATIVE);
   native->function = function;
   return native;
@@ -289,7 +289,7 @@ int obj_trait_find_slot(ObjectTraitDefinition *trait,
 
 static inline size_t impl_size(ObjectTraitDefinition *trait) {
   return sizeof(ObjectImpl) +
-         sizeof(ObjectClosure *) * array_count(trait->method_names);
+         sizeof(Object *) * array_count(trait->method_names);
 }
 
 ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,

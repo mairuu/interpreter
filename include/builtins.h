@@ -4,7 +4,7 @@
 
 typedef struct {
   const char *name;
-  NavtiveFunc fn;
+  NativeFunc fn;
 } BuiltinDef;
 
 typedef struct {

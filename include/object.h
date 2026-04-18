@@ -17,7 +17,7 @@ typedef enum {
   OBJECT_TRAIT_DEFINITION,
   OBJECT_IMPL,
   OBJECT_TRAIT_OBJECT,
-  OBJECT_BOUND_METHOD
+  OBJECT_BOUND_METHOD,
 } ObjectType;
 
 struct Object {
@@ -60,11 +60,11 @@ typedef struct {
 } ObjectClosure;
 
 typedef struct VirtualMachine VirtualMachine;
-typedef Value (*NavtiveFunc)(VirtualMachine *vm, int arg_count, Value *args);
+typedef Value (*NativeFunc)(VirtualMachine *vm, int arg_count, Value *args);
 
 typedef struct {
   Object object;
-  NavtiveFunc function;
+  NativeFunc function;
 } ObjectNative;
 
 typedef struct ObjectImpl ObjectImpl;
@@ -94,7 +94,7 @@ typedef struct ObjectImpl {
   Object object;
   ObjectTraitDefinition *trait;
   ObjectStructDefinition *struct_def;
-  ObjectClosure *methods[];
+  Object *methods[];
 } ObjectImpl;
 
 typedef struct {
@@ -108,6 +108,12 @@ typedef struct {
   Value receiver;
   ObjectClosure *method;
 } ObjectBoundMethod;
+
+typedef struct {
+  Object object;
+  Value value;
+  bool is_ok;
+} ObjectResult;
 
 int obj_print(char *buf, size_t size, Object *obj);
 
@@ -128,8 +134,11 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
   value_is_obj_type(value, OBJECT_TRAIT_DEFINITION)
 #define IS_IMPL(value) value_is_obj_type(value, OBJECT_IMPL)
 #define IS_TRAIT_OBJECT(value) value_is_obj_type(value, OBJECT_TRAIT_OBJECT)
+// #define IS_BOUND_METHOD(value) value_is_obj_type(value, OBJECT_BOUND_METHOD)
+#define IS_RESULT(value) value_is_obj_type(value, OBJECT_RESULT)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
+#define AS_CSTRING(value) (((ObjectString *)AS_OBJECT(value))->chars)
 #define AS_FUNCTION(value) ((ObjectFunction *)AS_OBJECT(value))
 #define AS_UPVALUE(value) ((ObjectUpvalue *)AS_OBJECT(value))
 #define AS_CLOSURE(value) ((ObjectClosure *)AS_OBJECT(value))
@@ -139,6 +148,7 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define AS_TRAIT_DEFINITION(value) ((ObjectTraitDefinition *)AS_OBJECT(value))
 #define AS_IMPL(value) ((ObjectImpl *)AS_OBJECT(value))
 #define AS_TRAIT_OBJECT(value) ((ObjectTraitObject *)AS_OBJECT(value))
+#define AS_RESULT(value) ((ObjectResult *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void obj_free(Object **obj, Allocator *al);
@@ -162,7 +172,7 @@ void obj_upvalue_free(ObjectUpvalue **obj, Allocator *al);
 ObjectClosure *obj_closure_new(Allocator *al, ObjectFunction *function);
 void obj_closure_free(ObjectClosure **obj, Allocator *al);
 
-ObjectNative *obj_native_new(Allocator *al, NavtiveFunc function);
+ObjectNative *obj_native_new(Allocator *al, NativeFunc function);
 void obj_native_free(ObjectNative **obj, Allocator *al);
 
 ObjectStructDefinition *obj_struct_definition_new(Allocator *al,

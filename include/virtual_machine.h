@@ -39,6 +39,9 @@ typedef struct VirtualMachine {
   jmp_buf panic_jump;
   char panic_message[256];
 
+  uint32_t next_trait_id;
+  uint32_t next_definition_id;
+
   Allocator al;
   BuiltinRegistry builtins;
 } VirtualMachine;
@@ -54,13 +57,16 @@ typedef enum {
 
 InterpretResult vm_interpret(VirtualMachine *vm, const char *source);
 
-void vm_runtime_error(VirtualMachine *vm, const char *format, ...);
+void vm_runtime_error(VirtualMachine *vm, const char *format, ...)
+    __attribute__((noreturn));
+
+void vm_track_object(VirtualMachine *vm, Object *object);
 
 ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
                                int length);
 
 void vm_define_native(VirtualMachine *vm, const char *name,
-                      NavtiveFunc function);
+                      NativeFunc function);
 
 ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
                             uint32_t hash);
@@ -71,7 +77,7 @@ ObjectUpvalue *vm_new_upvalue(VirtualMachine *vm, Value *location);
 
 ObjectClosure *vm_new_closure(VirtualMachine *vm, ObjectFunction *function);
 
-ObjectNative *vm_new_native(VirtualMachine *vm, NavtiveFunc function);
+ObjectNative *vm_new_native(VirtualMachine *vm, NativeFunc function);
 
 ObjectStructDefinition *vm_new_struct_definition(VirtualMachine *vm,
                                                  ObjectString *name,
