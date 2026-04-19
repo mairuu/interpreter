@@ -28,13 +28,12 @@ typedef struct {
 
 typedef struct {
   String name;
-  int arity;
+  String *fields;
 } RawVariantArm;
 
 typedef struct {
   String name;
   RawVariantArm *arms;
-  int arm_count;
 } RawVariantDef;
 
 typedef struct Proto Proto;

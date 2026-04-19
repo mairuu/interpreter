@@ -218,7 +218,21 @@ static TokenType identifier_type(Scanner *s) {
     }
     break;
   case 'v':
-    return check_keyword(s, 1, 2, "ar", TOKEN_VAR);
+    if (s->current - s->start > 1) {
+      if (s->start[1] == 'a') {
+        if (s->current - s->start > 2) {
+          if (s->start[2] == 'r') {
+            // var...
+            if (s->current - s->start > 3) {
+              if (s->start[3] == 'i') {
+                return check_keyword(s, 4, 3, "ant", TOKEN_VARIANT);
+              }
+            }
+            return check_keyword(s, 3, 0, "", TOKEN_VAR);
+          }
+        }
+      }
+    }
   }
   return TOKEN_IDENTIFIER;
 }

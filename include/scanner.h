@@ -59,6 +59,7 @@ typedef enum {
   TOKEN_TRAIT,
   TOKEN_TRUE,
   TOKEN_VAR,
+  TOKEN_VARIANT,
 
   TOKEN_ERROR,
   TOKEN_EOF

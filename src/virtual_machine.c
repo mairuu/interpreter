@@ -241,8 +241,10 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
     }
     return OBJECT_VALUE(trait_def);
   }
-  case RAW_VARIANT_DEF:
+  case RAW_VARIANT_DEF: {
+    assert(false && "variant definitions are not supported as constants yet");
     break;
+  }
   default:
     assert(false && "invalid constant type");
   }
@@ -688,7 +690,7 @@ static bool vm_run(VirtualMachine *vm) {
     for (Value *slot = vm->stack.values; slot < vm->stack.top; slot++) {
       printf("[ ");
       print_val(*slot);
-      printf(" %c", frame->base == slot ? '=' : ']');
+      printf(" %c", frame->base == slot ? '|' : ']');
     }
     printf("\n");
 

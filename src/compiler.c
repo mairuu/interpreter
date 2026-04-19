@@ -67,6 +67,17 @@ static void constant_destory(RawConstant constant, Allocator *al) {
     break;
   }
   case RAW_VARIANT_DEF:
+    int arm_count = array_count(constant.as.variant_def.arms);
+    for (int i = 0; i < arm_count; i++) {
+      str_destroy(&constant.as.variant_def.arms[i].name, al);
+      int field_count = array_count(constant.as.variant_def.arms[i].fields);
+      for (int j = 0; j < field_count; j++) {
+        str_destroy(&constant.as.variant_def.arms[i].fields[j], al);
+      }
+      array_free(constant.as.variant_def.arms[i].fields, al);
+    }
+    str_destroy(&constant.as.variant_def.name, al);
+    array_free(constant.as.variant_def.arms, al);
     break;
   }
 }
@@ -391,6 +402,12 @@ static int ctx_add_raw_constant_trait(CompilerContext *ctx, RawTraitDef def) {
       ctx, (RawConstant){.type = RAW_TRAIT_DEF, .as.trait_def = def});
 }
 
+static int ctx_add_raw_constant_variant(CompilerContext *ctx,
+                                        RawVariantDef def) {
+  return ctx_make_constant(
+      ctx, (RawConstant){.type = RAW_VARIANT_DEF, .as.variant_def = def});
+}
+
 static void ctx_register_definition(CompilerContext *ctx, Token name,
                                     DefinitionKind kind, int constant_index) {
   StringView name_str = sv_from_token(&name);
@@ -443,10 +460,10 @@ static void ctx_synchronize(CompilerContext *ctx) {
   ctx->parser.in_panic_mode = false;
 
   while (ctx->parser.current.type != TOKEN_EOF) {
-    // if (ctx->parser.current.type == TOKEN_SEMICOLON) {
-    //   ctx_advance(ctx);
-    //   return;
-    // }
+    if (ctx->parser.current.type == TOKEN_RIGHT_BRACE) {
+      ctx_advance(ctx);
+      return;
+    }
 
     switch (ctx->parser.current.type) {
     case TOKEN_RIGHT_BRACE:
@@ -460,6 +477,7 @@ static void ctx_synchronize(CompilerContext *ctx) {
     case TOKEN_STRUCT:
     case TOKEN_TRAIT:
     case TOKEN_IMPL:
+    case TOKEN_VARIANT:
       return;
     default:
       break;
@@ -1280,9 +1298,10 @@ static void declaration_var(CompilerContext *ctx) {
         deftable_get(&ctx->definition, sv_from_token(&name));
     if (existing != NULL) {
       char buf[256];
-      snprintf(buf, sizeof(buf),
-               "'%.*s' is a %s definition and cannot be shadowed by a variable.",
-               name.length, name.start, definition_kind_name(existing->kind));
+      snprintf(
+          buf, sizeof(buf),
+          "'%.*s' is a %s definition and cannot be shadowed by a variable.",
+          name.length, name.start, definition_kind_name(existing->kind));
       DIAGNOSTIC(ctx, buf, {existing->name_token, "definition declared here"},
                  {name, "variable declared here"}, );
       ctx_advance(ctx); // skip initializer expression
@@ -1591,6 +1610,130 @@ static void declaration_impl(CompilerContext *ctx) {
   ctx_emit_byte(ctx, OP_IMPL_COMMIT);
 }
 
+// variant Result {
+//     Ok(val) Err(msg)
+// }
+
+#define MAX_VARIANT_ARMS 32
+
+static bool ctx_enforce_max_tokens(CompilerContext *ctx, int count, int max,
+                                   const char *err_msg) {
+  if (count >= max) {
+    ctx_error_at(ctx, &ctx->parser.current, err_msg);
+    return false;
+  }
+  return true;
+}
+
+static bool ctx_enforce_unique_token(CompilerContext *ctx, Token *new_token,
+                                     Token *existing_tokens, int existing_count,
+                                     const char *err_msg) {
+  for (int i = 0; i < existing_count; i++) {
+    if (identifier_equals(new_token, &existing_tokens[i])) {
+      DIAGNOSTIC(ctx, err_msg, {existing_tokens[i], "first declared here"},
+                 {*new_token, "re-declared here"});
+      return false;
+    }
+  }
+  return true;
+}
+
+static void declaration_variant(CompilerContext *ctx) {
+  if (ctx->current_compiler->scope_depth != 0) {
+    ctx_error_at(ctx, &ctx->parser.current,
+                 "variants must be declared at top level.");
+  }
+
+  Token name = ctx_consume_identifier(ctx, "expect variant name.");
+  int variant_name_constant = ctx_identifier_constant(ctx, &name);
+
+  RawVariantDef def;
+  def.name = str_from_str(name.start, name.length, ctx->al);
+  def.arms = NULL;
+
+  Token arm_names[MAX_VARIANT_ARMS];
+  int arm_count = 0;
+  Token arm_field_names[MAX_STRUCT_FIELDS];
+  int arm_field_count = 0;
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before variant body.");
+
+  while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+    const char *err_msg = "can't have more than " STRINGIFY(
+        MAX_VARIANT_ARMS) " arms in a variant.";
+    if (!ctx_enforce_max_tokens(ctx, arm_count, MAX_VARIANT_ARMS, err_msg)) {
+      while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+        ctx_advance(ctx);
+      }
+      break;
+    }
+
+    Token arm_name =
+        ctx_consume_identifier(ctx, "expect arm name in variant body.");
+    ctx_enforce_unique_token(ctx, &arm_name, arm_field_names, arm_field_count,
+                             "duplicate arm name in variant body.");
+
+    arm_field_count = 0;
+    arm_names[arm_count++] = arm_name;
+
+    // arm
+    if (ctx_match(ctx, TOKEN_LEFT_PAREN)) {
+      while (!ctx_check(ctx, TOKEN_RIGHT_PAREN) && !ctx_check(ctx, TOKEN_EOF)) {
+        const char *err_msg = "can't have more than " STRINGIFY(
+            MAX_STRUCT_FIELDS) " fields in a variant arm.";
+        if (!ctx_enforce_max_tokens(ctx, arm_field_count, MAX_STRUCT_FIELDS,
+                                    err_msg)) {
+          while (!ctx_check(ctx, TOKEN_RIGHT_PAREN) &&
+                 !ctx_check(ctx, TOKEN_EOF)) {
+            ctx_advance(ctx);
+          }
+          break;
+        }
+
+        Token field_name =
+            ctx_consume_identifier(ctx, "expect field name in variant arm.");
+        ctx_enforce_unique_token(ctx, &field_name, arm_field_names,
+                                 arm_field_count,
+                                 "duplicate field name in variant arm.");
+
+        arm_field_names[arm_field_count++] = field_name;
+
+        if (!ctx_match(ctx, TOKEN_COMMA)) {
+          break;
+        }
+      }
+
+      ctx_consume(ctx, TOKEN_RIGHT_PAREN,
+                  "expect ')' after variant arm fields.");
+    }
+  }
+
+  ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after variant body.");
+
+  array_reserve(def.arms, arm_count, ctx->al);
+  for (int i = 0; i < arm_count; i++) {
+    RawVariantArm arm;
+    arm.name = str_from_str(arm_names[i].start, arm_names[i].length, ctx->al);
+    arm.fields = NULL;
+
+    if (arm_field_count > 0) {
+      array_reserve(arm.fields, arm_field_count, ctx->al);
+      for (int j = 0; j < arm_field_count; j++) {
+        String field_name = str_from_str(arm_field_names[j].start,
+                                         arm_field_names[j].length, ctx->al);
+        array_push(arm.fields, field_name, ctx->al);
+      }
+    }
+    array_push(def.arms, arm, ctx->al);
+  }
+
+  int const_idx = ctx_add_raw_constant_variant(ctx, def);
+  ctx_register_definition(ctx, name, DEFKIND_VARIANT, const_idx);
+
+  ctx_emit_bytes(ctx, OP_CONSTANT, (uint8_t)const_idx, OP_DEFINE_GLOBAL,
+                 *(uint8_t *)&variant_name_constant);
+}
+
 static void declaration(CompilerContext *ctx) {
   if (ctx_match(ctx, TOKEN_VAR)) {
     declaration_var(ctx);
@@ -1602,6 +1745,8 @@ static void declaration(CompilerContext *ctx) {
     declaration_trait(ctx);
   } else if (ctx_match(ctx, TOKEN_IMPL)) {
     declaration_impl(ctx);
+  } else if (ctx_match(ctx, TOKEN_VARIANT)) {
+    declaration_variant(ctx);
   } else {
     statement(ctx);
   }
