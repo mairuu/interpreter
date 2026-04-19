@@ -1,34 +1,7 @@
-trait Iterable { next has_next } 
-struct Range { current end }
-
-impl Iterable for Range {
-    fun next(self) {
-        var next = self.current
-        self.current = self.current + 1
-        return next
-    }
-    fun has_next(self) {
-        return self.current < self.end
-    }
+var a = match 1 {
+    1 => "one"
+    2 => "two"
+    _ => "three"
 }
 
-fun iterate(it: Iterable, on_iterate) {
-    for it.has_next() {
-        on_iterate(it.next())
-    }
-}
-
-{
-    var target = 1
-    iterate(Range(0, 3), fun(i) {
-        if type(i) != "number" {
-            panic("expected number")
-        }
-        if i == target {
-            print("> ")
-        } else {
-            print(": ")
-        }
-        println("i = ", i)
-    })
-}
+println(a)

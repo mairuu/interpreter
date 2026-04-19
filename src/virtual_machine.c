@@ -767,6 +767,16 @@ static bool vm_run(VirtualMachine *vm) {
       vm->stack.top--;
       break;
     }
+    case OP_POP_SECOND: {
+      vm->stack.top[-2] = vm->stack.top[-1];
+      vm->stack.top--;
+      break;
+    }
+    case OP_MATCH: {
+      vm->stack.top[-1] =
+          BOOL_VALUE(value_equals(vm_peek(vm, 1), vm_peek(vm, 0)));
+      break;
+    }
     case OP_DEFINE_GLOBAL: {
       ObjectString *name = READ_STRING();
       Value value = vm_peek(vm, 0);

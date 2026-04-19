@@ -447,6 +447,23 @@ static void ctx_emit_return(CompilerContext *ctx) {
   ctx_emit_byte(ctx, OP_RETURN);
 }
 
+static void ctx_emit_token_literal(CompilerContext *ctx, Token *literal) {
+  if (literal->type == TOKEN_NIL) {
+    ctx_emit_byte(ctx, OP_NIL);
+  } else if (literal->type == TOKEN_TRUE) {
+    ctx_emit_byte(ctx, OP_TRUE);
+  } else if (literal->type == TOKEN_FALSE) {
+    ctx_emit_byte(ctx, OP_FALSE);
+  } else if (literal->type == TOKEN_NUMBER) {
+    ctx_emit_byte(ctx, OP_CONSTANT);
+    double num = strtod(literal->start, NULL);
+    RawConstant constant = {.type = RAW_NUMBER, .as.number = num};
+    ctx_emit_byte(ctx, ctx_make_constant(ctx, constant));
+  } else {
+    ctx_error_at(ctx, literal, "not a literal token");
+  }
+}
+
 static Proto *ctx_end_compile(CompilerContext *ctx) {
   ctx_emit_return(ctx);
 
@@ -525,6 +542,7 @@ static void as(CompilerContext *ctx, bool can_assign);
 // expression
 static void if_(CompilerContext *ctx, bool can_assign);
 static void fun(CompilerContext *ctx, bool can_assign);
+static void match(CompilerContext *ctx, bool can_assign);
 
 ParseRule rules[] = {
     [TOKEN_LEFT_PAREN] = {grouping, call, PREC_CALL},
@@ -568,7 +586,7 @@ ParseRule rules[] = {
     [TOKEN_IF] = {if_, NULL, PREC_NONE},
     [TOKEN_IS] = {NULL, NULL, PREC_NONE},
     [TOKEN_IMPL] = {NULL, NULL, PREC_NONE},
-    [TOKEN_MATCH] = {NULL, NULL, PREC_NONE},
+    [TOKEN_MATCH] = {match, NULL, PREC_NONE},
     [TOKEN_NIL] = {literal, NULL, PREC_NONE},
     [TOKEN_OR] = {NULL, or_, PREC_OR},
     // [TOKEN_PRINT] = {NULL, NULL, PREC_NONE},
@@ -1103,51 +1121,99 @@ static void statement_return(CompilerContext *ctx) {
   }
 }
 
-// typedef struct {
-//   union {
-//     // PATTERN_VARIANT
-//     struct {
-//       uint8_t definition_constant;
-//       uint8_t tag;
-//       uint8_t arity;
-//     } variant;
-//     // PATTERN_TRAIT
-//     struct {
-//       uint8_t trait_constant;
-//       bool    has_binding;
-//     } trait;
-//     // PATTERN_TYPE
-//     struct {
-//       uint8_t type_tag;
-//     } type;
-//     // PATTERN_LITERAL — value already emitted as constant
-//   };
-// } ArmPattern;
+typedef enum {
+  ARM_PATTERN_LITERAL,
+  ARM_PATTERN_WILDCARD, // _
+} ArmPatternKind;
 
-// static void ctx_compile_match_arm(CompilerContext *ctx, int *end_jumps) {
-//   ArmPattern pattern = ctx_parse_arm_pattern(ctx);
+typedef struct {
+  ArmPatternKind kind;
+  union {
+    Token literal_token; // for ARM_PATTERN_LITERAL
+  };
+} ArmPattern;
 
-//   int next_arm_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
+static bool token_is_underscore(Token *token) {
+  return token->type == TOKEN_IDENTIFIER && token->length == 1 && token->start[0] == '_';
+}
 
-//   ctx_compile_pattern_bindings(ctx, &pattern);
+ArmPattern ctx_parse_arm_pattern(CompilerContext *ctx) {
+  // {literal}
+  ArmPattern pattern = {0};
 
-//   ctx_consume(ctx, TOKEN_FAT_ARROW, "expect '=>' after match arm pattern.");
+  if (ctx_check(ctx, TOKEN_NUMBER) || ctx_check(ctx, TOKEN_STRING) ||
+      ctx_check(ctx, TOKEN_TRUE) || ctx_check(ctx, TOKEN_FALSE) ||
+      ctx_check(ctx, TOKEN_NIL)) {
+    pattern.kind = ARM_PATTERN_LITERAL;
+    pattern.literal_token = ctx->parser.current;
+    ctx_advance(ctx);
+  // } else if (ctx_match(ctx, TOKEN_UNDERSCORE)) {
+  } else if (token_is_underscore(&ctx->parser.current)) {
+    ctx_advance(ctx);
+    pattern.kind = ARM_PATTERN_WILDCARD;
+  } else {
+    ctx_error_at(ctx, &ctx->parser.current, "unsupported match arm pattern.");
+  }
 
-//   ctx_begin_scope(ctx);
+  return pattern;
+}
 
-//   if (ctx_check(ctx, TOKEN_LEFT_BRACE)) {
-//     statement_block(ctx);
-//   } else {
-//     expression(ctx);
-//     ctx_emit_byte(ctx, OP_POP);
-//   }
-//   ctx_end_scope(ctx);
+typedef enum {
+  MATCH_MODE_STATEMENT,
+  MATCH_MODE_EXPRESSION,
+} MatchMode;
 
-//   array_push(end_jumps, ctx_emit_jump(ctx, OP_JUMP), ctx->al);
-//   ctx_patch_jump(ctx, next_arm_jump);
-// }
+static void ctx_compile_match_arm_body(CompilerContext *ctx, MatchMode mode) {
+  if (mode == MATCH_MODE_EXPRESSION) {
+    expression(ctx);
+  } else {
+    if (!ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before match arm body.")) {
+      // synchronize to next arm or end of match
+      expression(ctx);
+      return;
+    }
+    ctx_begin_scope(ctx);
+    statement_block(ctx);
+    ctx_end_scope(ctx);
+  }
+}
 
-static void statement_match(CompilerContext *ctx) {
+static void ctx_compile_match_arm(CompilerContext *ctx, MatchMode mode,
+                                  int *end_jumps) {
+  // <arm_pattern> => <arm_body>
+  ArmPattern pattern = ctx_parse_arm_pattern(ctx);
+
+  switch (pattern.kind) {
+  case ARM_PATTERN_LITERAL:
+    ctx_emit_token_literal(ctx, &pattern.literal_token);
+    ctx_emit_byte(ctx, OP_MATCH); // [a, b] => [a, (a == b)]
+    break;
+  case ARM_PATTERN_WILDCARD:
+    ctx_emit_constant(ctx, RAW_BOOL_VALUE(true)); // [a, _] => [a, true]
+    break;
+  default:
+    assert(false && "unhandled arm pattern kind");
+    break;
+  }
+
+  int next_arm_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
+  ctx_emit_byte(ctx, OP_POP);
+
+  // ArmBinding binding = ctx_compile_pattern_bindings(ctx, &pattern);
+
+  ctx_consume(ctx, TOKEN_FAT_ARROW, "expect '=>' after match arm pattern.");
+
+  ctx_compile_match_arm_body(ctx, mode);
+  // ctx_compile_match_arm_body(ctx, mode, binding);
+
+  array_push(end_jumps, ctx_emit_jump(ctx, OP_JUMP), ctx->al);
+  ctx_patch_jump(ctx, next_arm_jump);
+  ctx_emit_byte(ctx, OP_POP);
+}
+
+// mode == expression => match <expr> { <arm_pattern> => <expr> }
+// mode == statement  => match <expr> { <arm_pattern> => <block> }
+static void ctx_compile_match(CompilerContext *ctx, MatchMode mode) {
   // match <expr> { ... }
   expression(ctx);
 
@@ -1156,9 +1222,9 @@ static void statement_match(CompilerContext *ctx) {
   int *end_jumps;
   array_init(end_jumps, int, ctx->al);
 
-  // while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
-  //   ctx_compile_match_arm(ctx, end_jumps);
-  // }
+  while (!ctx_check(ctx, TOKEN_RIGHT_BRACE) && !ctx_check(ctx, TOKEN_EOF)) {
+    ctx_compile_match_arm(ctx, mode, end_jumps);
+  }
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after 'match' body.");
 
@@ -1167,6 +1233,16 @@ static void statement_match(CompilerContext *ctx) {
     ctx_patch_jump(ctx, end_jumps[i]);
   }
   array_free(end_jumps, ctx->al);
+
+  if (mode == MATCH_MODE_EXPRESSION) {
+    ctx_emit_byte(ctx, OP_POP_SECOND);
+  } else {
+    ctx_emit_bytes(ctx, OP_POP);
+  }
+}
+
+static void statement_match(CompilerContext *ctx) {
+  ctx_compile_match(ctx, MATCH_MODE_STATEMENT);
 }
 
 static void statement(CompilerContext *ctx) {
@@ -1991,6 +2067,11 @@ static void fun(CompilerContext *ctx, bool can_assign) {
   }
 
   ctx_compile_function(ctx, PROTO_FUNCTION, is_named ? &name : NULL);
+}
+
+static void match(CompilerContext *ctx, bool can_assign) {
+  (void)can_assign;
+  ctx_compile_match(ctx, MATCH_MODE_EXPRESSION);
 }
 
 Proto *compile(const char *source, Allocator *al) {
