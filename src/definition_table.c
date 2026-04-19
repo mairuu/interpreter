@@ -7,6 +7,19 @@
 
 #include "memory.h"
 
+static const char *defnames[] = {
+    [DEFKIND_STRUCT] = "struct",
+    [DEFKIND_TRAIT] = "trait",
+    [DEFKIND_VARIANT] = "variant",
+};
+
+const char *definition_kind_name(DefinitionKind kind) {
+  if (kind < 0 || kind >= sizeof(defnames) / sizeof(defnames[0])) {
+    return "unknown";
+  }
+  return defnames[kind];
+}
+
 #define TOMBSTONE_CHARS ((char *)-1)
 #define HIGH_WATER_MARK 0.75
 #define LOW_WATER_MARK 0.5

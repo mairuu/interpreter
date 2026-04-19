@@ -18,4 +18,4 @@ typedef struct {
 
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm);
 void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm);
-void builtins_destroy(BuiltinRegistry *reg, Allocator *al);
+void builtins_destroy(BuiltinRegistry *reg);

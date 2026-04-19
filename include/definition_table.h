@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "memory.h"
+#include "scanner.h"
 #include "string_utils.h"
 
 #define DEFTABLE_INITIAL_CAPACITY 8
@@ -17,6 +18,7 @@ typedef enum {
 typedef struct {
   String name; // The entry owns this String allocation
   DefinitionKind kind;
+  Token name_token;   // for error reporting
   int constant_index; // into the constant pool
 } DefinitionEntry;
 

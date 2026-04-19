@@ -1,8 +1,8 @@
-struct NumberRange { current end }
-trait Iterator { next has_next }
+trait Iterable { next has_next } 
+struct Range { current end }
 
-impl Iterator for NumberRange {
-    fun next(self, Iterator) {
+impl Iterable for Range {
+    fun next(self) {
         var next = self.current
         self.current = self.current + 1
         return next
@@ -12,6 +12,23 @@ impl Iterator for NumberRange {
     }
 }
 
-var Iterator = 3
+fun iterate(it: Iterable, on_iterate) {
+    for it.has_next() {
+        on_iterate(it.next())
+    }
+}
 
-fun do_work(Iterator) {}
+{
+    var target = 1
+    iterate(Range(0, 3), fun(i) {
+        if type(i) != "number" {
+            panic("expected number")
+        }
+        if i == target {
+            print("> ")
+        } else {
+            print(": ")
+        }
+        println("i = ", i)
+    })
+}

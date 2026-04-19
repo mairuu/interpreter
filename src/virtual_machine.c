@@ -48,13 +48,11 @@ void vm_track_object(VirtualMachine *vm, Object *object) {
   vm->objects = object;
 }
 
-bool vm_track_object_if_needed(VirtualMachine *vm, Object *object) {
-  assert(object != NULL && "cannot track NULL object");
-  if (object->next == NULL) {
-    vm_track_object(vm, object);
-    return true;
-  }
-  return false;
+void vm_begin_staging(VirtualMachine *vm) { vm->gc_disabled++; }
+
+void vm_end_staging(VirtualMachine *vm) {
+  assert(vm->gc_disabled > 0 && "unbalanced staging calls");
+  vm->gc_disabled--;
 }
 
 ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
@@ -147,9 +145,8 @@ static uint32_t vm_next_trait_id(VirtualMachine *vm) {
   return vm->next_trait_id++;
 }
 
-// intern string without tracking
-static ObjectString *_vm_intern_string_untrack(VirtualMachine *vm,
-                                               const char *chars, int length) {
+ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
+                               int length) {
   uint32_t hash = hash_string(chars, length);
 
   ObjectString temp_str = obj_string_create(chars, length, hash);
@@ -159,37 +156,27 @@ static ObjectString *_vm_intern_string_untrack(VirtualMachine *vm,
     return AS_STRING(*existing);
   }
 
+  vm_begin_staging(vm);
   char *copy = copy_string(chars, length, &vm->al);
-  ObjectString *string = obj_string_new(&vm->al, copy, length, hash);
+  ObjectString *string = vm_new_string(vm, copy, length, hash);
   string->is_interned = true;
   if (string == NULL) {
+    vm_end_staging(vm);
     return NULL;
   }
 
-  vm_push(vm, OBJECT_VALUE(string));
   ht_put(&vm->strings, OBJECT_VALUE(string), OBJECT_VALUE(string), &vm->al);
-  vm_pop(vm);
-  return string;
-}
-
-ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
-                               int length) {
-  ObjectString *string = _vm_intern_string_untrack(vm, chars, length);
-  if (string != NULL) {
-    vm_track_object(vm, &string->object);
-  }
+  vm_end_staging(vm);
   return string;
 }
 
 void vm_define_native(VirtualMachine *vm, const char *name,
                       NativeFunc function) {
+  vm_begin_staging(vm);
   Value string = OBJECT_VALUE(vm_intern_string(vm, name, strlen(name)));
-  vm_push(vm, string);
   Value native = OBJECT_VALUE(vm_new_native(vm, function));
-  vm_push(vm, native);
   ht_put(&vm->globals, string, native, &vm->al);
-  vm_pop(vm);
-  vm_pop(vm);
+  vm_end_staging(vm);
 }
 
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto);
@@ -207,13 +194,12 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
   case RAW_NUMBER:
     return NUMBER_VALUE(raw_constant->as.number);
   case RAW_STRING: {
-    ObjectString *interned = _vm_intern_string_untrack(
-        vm, raw_constant->as.string.chars, raw_constant->as.string.length);
+    ObjectString *interned = vm_intern_string(vm, raw_constant->as.string.chars,
+                                              raw_constant->as.string.length);
     if (interned == NULL) {
       assert(false && "out of memory for string constant");
       return NIL_VALUE;
     }
-    vm_track_object_if_needed(vm, &interned->object);
     return OBJECT_VALUE(interned);
   }
   case RAW_FUNC: {
@@ -225,54 +211,33 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
     const RawStructDef *raw_def = &raw_constant->as.struct_def;
 
     uint16_t definition_id = vm_next_definition_id(vm);
-    ObjectString *name = _vm_intern_string_untrack(vm, raw_def->name.chars,
-                                                   raw_def->name.length);
+    ObjectString *name =
+        vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
     ObjectStructDefinition *struct_def =
-        obj_struct_definition_new(&vm->al, name, definition_id);
+        vm_new_struct_definition(vm, name, definition_id);
 
     int field_count = array_count(raw_def->fields);
     for (int i = 0; i < field_count; i++) {
-      ObjectString *field_name = _vm_intern_string_untrack(
-          vm, raw_def->fields[i].chars, raw_def->fields[i].length);
+      ObjectString *field_name = vm_intern_string(vm, raw_def->fields[i].chars,
+                                                  raw_def->fields[i].length);
       ht_put(&struct_def->fields, OBJECT_VALUE(field_name), NUMBER_VALUE(i),
              &vm->al);
     }
-
-    vm_track_object_if_needed(vm, &name->object);
-    vm_track_object(vm, &struct_def->object);
-
-    HashTableIterator it;
-    hti_init(&it, &struct_def->fields);
-    while (hti_next(&it)) {
-      assert(IS_STRING(*it.key) && "keys in string table should be strings");
-      vm_track_object_if_needed(vm, AS_OBJECT(*it.key));
-    }
-
     return OBJECT_VALUE(struct_def);
   case RAW_TRAIT_DEF: {
     const RawTraitDef *raw_def = &raw_constant->as.trait_def;
 
     uint16_t trait_id = vm_next_trait_id(vm);
-    ObjectString *name = _vm_intern_string_untrack(vm, raw_def->name.chars,
-                                                   raw_def->name.length);
+    ObjectString *name =
+        vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
     ObjectTraitDefinition *trait_def =
-        obj_trait_definition_new(&vm->al, name, trait_id);
+        vm_new_trait_definition(vm, name, trait_id);
 
     int method_count = array_count(raw_def->methods);
     for (int i = 0; i < method_count; i++) {
-      ObjectString *method_name = _vm_intern_string_untrack(
+      ObjectString *method_name = vm_intern_string(
           vm, raw_def->methods[i].chars, raw_def->methods[i].length);
       array_push(trait_def->method_names, method_name, &vm->al);
-    }
-
-    vm_track_object_if_needed(vm, &name->object);
-    vm_track_object(vm, &trait_def->object);
-
-    for (int i = 0; i < method_count; i++) {
-      assert(IS_STRING(OBJECT_VALUE(trait_def->method_names[i])) &&
-             "method names in trait definition should be strings");
-      vm_track_object_if_needed(
-          vm, AS_OBJECT(OBJECT_VALUE(trait_def->method_names[i])));
     }
     return OBJECT_VALUE(trait_def);
   }
@@ -286,8 +251,9 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
 }
 
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
+  vm_begin_staging(vm);
+
   ObjectFunction *function = vm_new_function(vm, proto->arity);
-  vm_push(vm, OBJECT_VALUE(function));
   ConstantLoader loader = {
       .load_constant = load_constant,
       .ctx = vm,
@@ -298,8 +264,7 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
 
   if (!str_is_empty(proto->name)) {
     function->name =
-        _vm_intern_string_untrack(vm, proto->name.chars, proto->name.length);
-    vm_track_object_if_needed(vm, &function->name->object);
+        vm_intern_string(vm, proto->name.chars, proto->name.length);
   }
 
 #ifdef DEBUG_PRINT_CODE
@@ -311,7 +276,7 @@ static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto) {
 
   proto_destroy(proto, &vm->al);
   al_free_for(&vm->al, proto);
-  vm_pop(vm);
+  vm_end_staging(vm);
 
   return function;
 }
@@ -535,6 +500,7 @@ void vm_init(VirtualMachine *vm, Allocator al) {
 
   vm->al = al;
   vm->objects = NULL;
+  vm->gc_disabled = 0;
 
   vm->next_definition_id = 1;
   vm->next_trait_id = 1;
@@ -550,7 +516,7 @@ void vm_init(VirtualMachine *vm, Allocator al) {
 
 void vm_destroy(VirtualMachine *vm) {
   vm_reset_stack(vm);
-  builtins_destroy(&vm->builtins, &vm->al);
+  builtins_destroy(&vm->builtins);
 
   ht_destroy(&vm->globals, &vm->al);
   ht_destroy(&vm->strings, &vm->al);
@@ -1114,5 +1080,8 @@ InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
   }
 
   ObjectFunction *function = vm_load_proto(vm, proto);
+  assert(!vm->gc_disabled &&
+         "gc should not be disabled when executing a script");
+
   return vm_execute_script(vm, function);
 }

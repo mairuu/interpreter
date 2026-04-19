@@ -30,9 +30,10 @@ typedef struct VirtualMachine {
   CallFrame frames[FRAMES_MAX];
   int frame_count;
 
-  HashTable strings; // interned strings
-  HashTable globals; // global variables
-  Object *objects;   // link-list of all allocated objects
+  HashTable strings;    // interned strings
+  HashTable globals;    // global variables
+  Object *objects;      // link-list of all allocated objects
+  uint32_t gc_disabled; // gc is disabled when non-zero
 
   ObjectUpvalue *open_upvalues; // link-list of open upvalues
 

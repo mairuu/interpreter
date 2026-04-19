@@ -184,14 +184,13 @@ static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
 }
 
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm) {
-  *reg = (BuiltinRegistry){
-      .type_bool = vm_intern_string(vm, "bool", 4),
-      .type_nil = vm_intern_string(vm, "nil", 3),
-      .type_number = vm_intern_string(vm, "number", 6),
-      .type_object = vm_intern_string(vm, "object", 6),
-      .type_empty = vm_intern_string(vm, "empty", 5),
-      .type_string = vm_intern_string(vm, "string", 6),
-  };
+  *reg = (BuiltinRegistry){0};
+  reg->type_bool = vm_intern_string(vm, "bool", 4);
+  reg->type_nil = vm_intern_string(vm, "nil", 3);
+  reg->type_number = vm_intern_string(vm, "number", 6);
+  reg->type_object = vm_intern_string(vm, "object", 6);
+  reg->type_empty = vm_intern_string(vm, "empty", 5);
+  reg->type_string = vm_intern_string(vm, "string", 6);
 }
 
 void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm) {
@@ -211,8 +210,7 @@ void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm) {
   }
 }
 
-void builtins_destroy(BuiltinRegistry *reg, Allocator *al) {
-  (void)al;
+void builtins_destroy(BuiltinRegistry *reg) {
   reg->type_bool = NULL;
   reg->type_nil = NULL;
   reg->type_number = NULL;

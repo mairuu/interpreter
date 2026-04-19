@@ -395,8 +395,12 @@ static void ctx_register_definition(CompilerContext *ctx, Token name,
                                     DefinitionKind kind, int constant_index) {
   StringView name_str = sv_from_token(&name);
 
-  if (deftable_get(&ctx->definition, name_str) != NULL) {
-    ctx_error_at(ctx, &name, "name already defined in this scope.");
+  DefinitionEntry *existing = deftable_get(&ctx->definition, name_str);
+  if (existing != NULL) {
+    DIAGNOSTIC(
+        ctx, "definition already exists",
+        {.token = existing->name_token, .label = "previous definition is here"},
+        {.token = name, .label = "conflicting definition is here"});
     return;
   }
 
@@ -404,6 +408,7 @@ static void ctx_register_definition(CompilerContext *ctx, Token name,
       .name = str_from_str(name.start, name.length, ctx->al),
       .kind = kind,
       .constant_index = constant_index,
+      .name_token = name,
   };
 
   if (!deftable_put(&ctx->definition, entry, ctx->al)) {
@@ -1274,7 +1279,12 @@ static void declaration_var(CompilerContext *ctx) {
     DefinitionEntry *existing =
         deftable_get(&ctx->definition, sv_from_token(&name));
     if (existing != NULL) {
-      ctx_error_at(ctx, &name, "definition cannot be shadowed by a variable");
+      char buf[256];
+      snprintf(buf, sizeof(buf),
+               "'%.*s' is a %s definition and cannot be shadowed by a variable.",
+               name.length, name.start, definition_kind_name(existing->kind));
+      DIAGNOSTIC(ctx, buf, {existing->name_token, "definition declared here"},
+                 {name, "variable declared here"}, );
       ctx_advance(ctx); // skip initializer expression
       return;
     }
@@ -1288,18 +1298,6 @@ static void declaration_var(CompilerContext *ctx) {
 
   ctx_define_variable(ctx, index);
 }
-
-// impl Updatable for Point {
-//   fun tick(self, dt) {
-//     self.x = self.x + self.v * dt
-//   }
-// }
-
-// fun simulate(u: Updatable) {
-//   u.tick(1)
-// }
-
-// temp
 
 static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type,
                                     Token *type_constraint) {
@@ -1350,8 +1348,13 @@ static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type,
       DefinitionEntry *existing =
           deftable_get(&ctx->definition, sv_from_token(&name));
       if (existing != NULL) {
-        ctx_error_at(ctx, &name,
-                     "definition cannot be shadowed by a parameter");
+        char buf[256];
+        snprintf(
+            buf, sizeof(buf),
+            "'%.*s' is a %s definition and cannot be shadowed by a parameter.",
+            name.length, name.start, definition_kind_name(existing->kind));
+        DIAGNOSTIC(ctx, buf, {existing->name_token, "definition declared here"},
+                   {name, "parameter declared here"}, );
       }
     } while (ctx_match(ctx, TOKEN_COMMA));
   }

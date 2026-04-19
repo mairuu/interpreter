@@ -74,9 +74,9 @@ static void gc_mark_values(GarbageCollector *gc, Value *values, int count) {
 }
 
 static void builtins_gc_visit(BuiltinRegistry *reg, GarbageCollector *gc) {
-  const ObjectString *type_names[] = {reg->type_nil, reg->type_bool,
+  const ObjectString *type_names[] = {reg->type_nil,    reg->type_bool,
                                       reg->type_number, reg->type_object,
-                                      reg->type_empty};
+                                      reg->type_empty,  reg->type_string};
   for (size_t i = 0; i < sizeof(type_names) / sizeof(type_names[0]); i++) {
     gc_mark_object(gc, (Object *)type_names[i]);
   }
@@ -219,6 +219,10 @@ static void gc_sweep(GarbageCollector *gc) {
 }
 
 static void gc_collect(GarbageCollector *gc) {
+  if (gc->vm->gc_disabled) {
+    return;
+  }
+
 #ifdef DEBUG_LOG_GC
   printf("-- gc begin\n");
   size_t before = gc->bytes_allocated;
