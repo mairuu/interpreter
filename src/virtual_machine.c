@@ -120,11 +120,10 @@ ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
   return impl;
 }
 
-ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
-                                       ObjectStructInstance *instance,
+ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm, Object *receiver,
                                        ObjectImpl *impl) {
   ObjectTraitObject *trait_object =
-      obj_trait_object_new(&vm->al, instance, impl);
+      obj_trait_object_new(&vm->al, receiver, impl);
   vm_track_object(vm, &trait_object->object);
   return trait_object;
 }
@@ -380,23 +379,21 @@ static void vm_concatenate(VirtualMachine *vm) {
   vm_push(vm, OBJECT_VALUE(str));
 }
 
+// extracts the struct instance from a values
 static ObjectStructInstance *vm_extract_struct_instance(VirtualMachine *vm,
                                                         Value value) {
+  (void)vm;
   if (IS_STRUCT_INSTANCE(value)) {
     return AS_STRUCT_INSTANCE(value);
   }
 
   if (IS_TRAIT_OBJECT(value)) {
     ObjectTraitObject *trait_object = AS_TRAIT_OBJECT(value);
-    // if (trait_object->impl->trait == trait) {
-    //   return trait_object->instance; // signal: already the right trait
-    // }
-    return trait_object->instance;
+    if (trait_object->receiver->type == OBJECT_STRUCT_INSTANCE) {
+      return (ObjectStructInstance *)trait_object->receiver;
+    }
   }
 
-  vm_runtime_error(vm,
-                   "value does not satisfy the constraint: expected a struct "
-                   "instance or trait object");
   return NULL;
 }
 
@@ -410,17 +407,27 @@ static ObjectTraitObject *vm_cast_trait(VirtualMachine *vm, Value value,
   }
 
   ObjectStructInstance *instance = vm_extract_struct_instance(vm, value);
-  if (instance == NULL) {
-    return NULL;
+  if (instance != NULL) {
+    ObjectImpl *impl = obj_struct_definition_find_impl(instance->def, trait);
+    if (impl != NULL) {
+      return vm_new_trait_object(vm, &instance->obj, impl);
+    }
+
+    vm_runtime_error(vm,
+                     "no implementation found for trait '%s' on struct '%s'",
+                     trait->name->chars, instance->def->name->chars);
   }
 
-  ObjectImpl *impl = obj_struct_definition_find_impl(instance->def, trait);
-  if (impl != NULL) {
-    return vm_new_trait_object(vm, instance, impl);
-  }
+  // here we have opportunity for native object to implement traits
+  // if (IS_OBJECT(value)) {
+  //   Object *obj = AS_OBJECT(value);
+  //   ObjectImpl *impl = vm_find_native_impl(vm, obj->type, trait);
+  //   if (impl != NULL) {
+  //     return vm_new_trait_object(vm, obj, impl);
+  //   }
+  // }
 
-  vm_runtime_error(vm, "no implementation found for trait '%s' on struct '%s'",
-                   trait->name->chars, instance->def->name->chars);
+  vm_runtime_error(vm, "value does not satisfy the constraint");
   return NULL;
 }
 
@@ -611,7 +618,7 @@ static Value *vm_field_reference(VirtualMachine *vm, Value receiver,
                                  uint8_t *ip, Chunk *chunk, uint8_t name_idx,
                                  uint16_t cached_id, uint8_t cached_offset) {
   if (IS_TRAIT_OBJECT(receiver)) {
-    receiver = OBJECT_VALUE(AS_TRAIT_OBJECT(receiver)->instance);
+    receiver = OBJECT_VALUE(AS_TRAIT_OBJECT(receiver)->receiver);
   }
 
   if (!IS_STRUCT_INSTANCE(receiver)) {

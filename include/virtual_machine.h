@@ -95,6 +95,5 @@ ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
 ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
                         ObjectStructDefinition *struct_def);
 
-ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
-                                       ObjectStructInstance *instance,
+ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm, Object *receiver,
                                        ObjectImpl *impl);

@@ -269,8 +269,10 @@ static inline size_t trait_definition_size(int method_count) {
   return sizeof(ObjectTraitDefinition) + sizeof(ObjectString *) * method_count;
 }
 
-ObjectTraitDefinition *
-obj_trait_definition_new(Allocator *al, ObjectString *name, uint32_t trait_id, int method_count) {
+ObjectTraitDefinition *obj_trait_definition_new(Allocator *al,
+                                                ObjectString *name,
+                                                uint32_t trait_id,
+                                                int method_count) {
   ObjectTraitDefinition *trait = (ObjectTraitDefinition *)obj_new(
       al, trait_definition_size(method_count), OBJECT_TRAIT_DEFINITION);
   trait->name = name;
@@ -302,8 +304,7 @@ int obj_trait_find_slot(ObjectTraitDefinition *trait,
 }
 
 static inline size_t impl_size(ObjectTraitDefinition *trait) {
-  return sizeof(ObjectImpl) +
-         sizeof(Object *) * trait->method_count;
+  return sizeof(ObjectImpl) + sizeof(Object *) * trait->method_count;
 }
 
 ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
@@ -326,12 +327,11 @@ void obj_impl_free(ObjectImpl **obj, Allocator *al) {
   *obj = NULL;
 }
 
-ObjectTraitObject *obj_trait_object_new(Allocator *al,
-                                        ObjectStructInstance *instance,
+ObjectTraitObject *obj_trait_object_new(Allocator *al, Object *receiver,
                                         ObjectImpl *impl) {
   ObjectTraitObject *trait_object =
       OBJECT_NEW(al, ObjectTraitObject, OBJECT_TRAIT_OBJECT);
-  trait_object->instance = instance;
+  trait_object->receiver = receiver;
   trait_object->impl = impl;
   return trait_object;
 }

@@ -102,7 +102,7 @@ typedef struct ObjectImpl {
 
 typedef struct {
   Object object;
-  ObjectStructInstance *instance;
+  Object *receiver;
   ObjectImpl *impl;
 } ObjectTraitObject;
 
@@ -221,8 +221,7 @@ ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
                          ObjectStructDefinition *struct_def);
 void obj_impl_free(ObjectImpl **obj, Allocator *al);
 
-ObjectTraitObject *obj_trait_object_new(Allocator *al,
-                                        ObjectStructInstance *instance,
+ObjectTraitObject *obj_trait_object_new(Allocator *al, Object *receiver,
                                         ObjectImpl *impl);
 void obj_trait_object_free(ObjectTraitObject **obj, Allocator *al);
 

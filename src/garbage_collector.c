@@ -172,7 +172,7 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
   }
   case OBJECT_TRAIT_OBJECT: {
     ObjectTraitObject *trait_object = (ObjectTraitObject *)obj;
-    gc_mark_object(gc, (Object *)trait_object->instance);
+    gc_mark_object(gc, (Object *)trait_object->receiver);
     gc_mark_object(gc, (Object *)trait_object->impl);
     break;
   }
