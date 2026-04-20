@@ -89,7 +89,8 @@ typedef struct ObjectTraitDefinition {
   Object object;
   ObjectString *name;
   uint16_t trait_id;
-  ObjectString **method_names;
+  int method_count;
+  ObjectString *method_names[];
 } ObjectTraitDefinition;
 
 typedef struct ObjectImpl {
@@ -152,7 +153,8 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define IS_TRAIT_OBJECT(value) value_is_obj_type(value, OBJECT_TRAIT_OBJECT)
 // #define IS_BOUND_METHOD(value) value_is_obj_type(value, OBJECT_BOUND_METHOD)
 #define IS_RESULT(value) value_is_obj_type(value, OBJECT_RESULT)
-#define IS_VARIANT_DEFINITION(value) value_is_obj_type(value, OBJECT_VARIANT_DEFINITION)
+#define IS_VARIANT_DEFINITION(value)                                           \
+  value_is_obj_type(value, OBJECT_VARIANT_DEFINITION)
 #define IS_VARIANT(value) value_is_obj_type(value, OBJECT_VARIANT)
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
@@ -167,7 +169,8 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define AS_IMPL(value) ((ObjectImpl *)AS_OBJECT(value))
 #define AS_TRAIT_OBJECT(value) ((ObjectTraitObject *)AS_OBJECT(value))
 #define AS_RESULT(value) ((ObjectResult *)AS_OBJECT(value))
-#define AS_VARIANT_DEFINITION(value) ((ObjectVariantDefinition *)AS_OBJECT(value))
+#define AS_VARIANT_DEFINITION(value)                                           \
+  ((ObjectVariantDefinition *)AS_OBJECT(value))
 #define AS_VARIANT(value) ((ObjectVariant *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
@@ -206,8 +209,10 @@ ObjectStructInstance *obj_struct_instance_new(Allocator *al,
                                               ObjectStructDefinition *def);
 void obj_struct_instance_free(ObjectStructInstance **obj, Allocator *al);
 
-ObjectTraitDefinition *
-obj_trait_definition_new(Allocator *al, ObjectString *name, uint32_t trait_id);
+ObjectTraitDefinition *obj_trait_definition_new(Allocator *al,
+                                                ObjectString *name,
+                                                uint32_t trait_id,
+                                                int method_count);
 void obj_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al);
 int obj_trait_find_slot(ObjectTraitDefinition *trait,
                         ObjectString *method_name);
@@ -225,11 +230,10 @@ ObjectBoundMethod *obj_bound_method_new(Allocator *al, Value receiver,
                                         ObjectClosure *method);
 void obj_bound_method_free(ObjectBoundMethod **obj, Allocator *al);
 
-
-ObjectVariantDefinition *obj_variant_definition_new(Allocator *al, ObjectString *name,
-                                                  int arm_count);
+ObjectVariantDefinition *
+obj_variant_definition_new(Allocator *al, ObjectString *name, int arm_count);
 void obj_variant_definition_free(ObjectVariantDefinition **obj, Allocator *al);
 
 ObjectVariant *obj_variant_new(Allocator *al, ObjectVariantDefinition *def,
-                                int tag, int arity);
+                               int tag, int arity);
 void obj_variant_free(ObjectVariant **obj, Allocator *al);

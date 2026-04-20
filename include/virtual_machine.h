@@ -89,7 +89,8 @@ ObjectStructInstance *vm_new_struct_instance(VirtualMachine *vm,
 
 ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
                                                ObjectString *name,
-                                               uint16_t trait_id);
+                                               uint16_t trait_id,
+                                               int method_count);
 
 ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
                         ObjectStructDefinition *struct_def);

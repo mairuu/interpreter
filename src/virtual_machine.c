@@ -105,9 +105,10 @@ ObjectStructInstance *vm_new_struct_instance(VirtualMachine *vm,
 
 ObjectTraitDefinition *vm_new_trait_definition(VirtualMachine *vm,
                                                ObjectString *name,
-                                               uint16_t trait_id) {
+                                               uint16_t trait_id,
+                                               int method_count) {
   ObjectTraitDefinition *trait =
-      obj_trait_definition_new(&vm->al, name, trait_id);
+      obj_trait_definition_new(&vm->al, name, trait_id, method_count);
   vm_track_object(vm, &trait->object);
   return trait;
 }
@@ -245,16 +246,17 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
     const RawTraitDef *raw_def = &raw_constant->as.trait_def;
 
     uint16_t trait_id = vm_next_trait_id(vm);
+    int method_count = array_count(raw_def->methods);
+
     ObjectString *name =
         vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
     ObjectTraitDefinition *trait_def =
-        vm_new_trait_definition(vm, name, trait_id);
+        vm_new_trait_definition(vm, name, trait_id, method_count);
 
-    int method_count = array_count(raw_def->methods);
     for (int i = 0; i < method_count; i++) {
       ObjectString *method_name = vm_intern_string(
           vm, raw_def->methods[i].chars, raw_def->methods[i].length);
-      array_push(trait_def->method_names, method_name, &vm->al);
+      trait_def->method_names[i] = method_name;
     }
     return OBJECT_VALUE(trait_def);
   }
@@ -1137,8 +1139,7 @@ static bool vm_run(VirtualMachine *vm) {
       assert(IS_IMPL(impl_val) && "expected an impl on the stack");
       ObjectImpl *impl = AS_IMPL(impl_val);
 
-      int method_count = array_count(impl->trait->method_names);
-      for (int i = 0; i < method_count; i++) {
+      for (int i = 0; i < impl->trait->method_count; i++) {
         if (impl->methods[i] == NULL) {
           vm_runtime_error(vm,
                            "method '%s' not implemented for struct '%s' "

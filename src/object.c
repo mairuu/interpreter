@@ -265,13 +265,20 @@ void obj_struct_instance_free(ObjectStructInstance **obj, Allocator *al) {
   *obj = NULL;
 }
 
+static inline size_t trait_definition_size(int method_count) {
+  return sizeof(ObjectTraitDefinition) + sizeof(ObjectString *) * method_count;
+}
+
 ObjectTraitDefinition *
-obj_trait_definition_new(Allocator *al, ObjectString *name, uint32_t trait_id) {
-  ObjectTraitDefinition *trait =
-      OBJECT_NEW(al, ObjectTraitDefinition, OBJECT_TRAIT_DEFINITION);
+obj_trait_definition_new(Allocator *al, ObjectString *name, uint32_t trait_id, int method_count) {
+  ObjectTraitDefinition *trait = (ObjectTraitDefinition *)obj_new(
+      al, trait_definition_size(method_count), OBJECT_TRAIT_DEFINITION);
   trait->name = name;
   trait->trait_id = trait_id;
-  array_init(trait->method_names, ObjectString *, al);
+  trait->method_count = method_count;
+  for (int i = 0; i < method_count; i++) {
+    trait->method_names[i] = NULL;
+  }
   return trait;
 }
 
@@ -280,15 +287,13 @@ void obj_trait_definition_free(ObjectTraitDefinition **obj, Allocator *al) {
     return;
   }
 
-  array_free((*obj)->method_names, al);
-  al_free(al, *obj, sizeof(ObjectTraitDefinition));
+  al_free(al, *obj, trait_definition_size((*obj)->method_count));
   *obj = NULL;
 }
 
 int obj_trait_find_slot(ObjectTraitDefinition *trait,
                         ObjectString *method_name) {
-  int method_count = array_count(trait->method_names);
-  for (int i = 0; i < method_count; i++) {
+  for (int i = 0; i < trait->method_count; i++) {
     if (obj_string_equals(trait->method_names[i], method_name)) {
       return i;
     }
@@ -298,7 +303,7 @@ int obj_trait_find_slot(ObjectTraitDefinition *trait,
 
 static inline size_t impl_size(ObjectTraitDefinition *trait) {
   return sizeof(ObjectImpl) +
-         sizeof(Object *) * array_count(trait->method_names);
+         sizeof(Object *) * trait->method_count;
 }
 
 ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
@@ -307,8 +312,7 @@ ObjectImpl *obj_impl_new(Allocator *al, ObjectTraitDefinition *trait,
   impl->trait = trait;
   impl->struct_def = struct_def;
 
-  size_t method_count = array_count(trait->method_names);
-  for (size_t i = 0; i < method_count; i++) {
+  for (int i = 0; i < trait->method_count; i++) {
     impl->methods[i] = NULL;
   }
   return impl;
