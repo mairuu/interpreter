@@ -14,6 +14,8 @@ typedef struct {
   ObjectString *type_object;
   ObjectString *type_empty;
   ObjectString *type_string;
+
+  ObjectTraitDefinition *iterable;
 } BuiltinRegistry;
 
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm);

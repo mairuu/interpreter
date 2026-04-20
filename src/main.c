@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "bootstrap.h"
 #include "garbage_collector.h"
 #include "virtual_machine.h"
 
@@ -125,6 +126,7 @@ static void ta_init(TrackAllocatorContext *ctx, Allocator *inner) {
 static void ta_destory(Allocator *allocator) { (void)allocator; }
 
 int main(int argc, char *argv[]) {
+  int ret_code = 0;
   Allocator heap_alloc = heap_allocator_create();
 
   TrackAllocatorContext track;
@@ -137,15 +139,23 @@ int main(int argc, char *argv[]) {
 
   vm_init(&vm, gc_alloc);
 
+  if (!bootstrap(&vm)) {
+    fprintf(stderr, "bootstrap failed.\n");
+    ret_code = 70;
+    goto cleanup;
+  }
+
   if (argc == 1) {
     repl(&vm);
   } else if (argc == 2) {
     run_file(&vm, argv[1]);
   } else {
     fprintf(stderr, "usage: interpreter [path]\n");
-    exit(64);
+    ret_code = 64;
+    goto cleanup;
   }
 
+cleanup:
   vm_destroy(&vm);
 
   assert(gc.bytes_allocated == 0 && "memory leak detected: garbage collector "
@@ -156,5 +166,5 @@ int main(int argc, char *argv[]) {
                                  "has allocated memory that was not freed");
   ta_destory(&track_alloc);
 
-  return 0;
+  return ret_code;
 }

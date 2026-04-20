@@ -7,25 +7,9 @@
 #include <time.h>
 
 #include "garbage_collector.h"
-#include "memory.h"
 #include "object.h"
+#include "string_utils.h"
 #include "virtual_machine.h"
-
-static uint32_t hash_string(const char *str, int length) {
-  uint32_t hash = 2166136261u;
-  for (int i = 0; i < length; i++) {
-    hash ^= (uint8_t)str[i];
-    hash *= 16777619u;
-  }
-  return hash;
-}
-
-static char *copy_string(const char *str, int length, Allocator *al) {
-  char *copy = al_alloc(al, length + 1);
-  memcpy(copy, str, length);
-  copy[length] = '\0';
-  return copy;
-}
 
 static Value native_clock(VirtualMachine *vm, int arg_count, Value *args) {
   (void)vm;
@@ -185,6 +169,7 @@ static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
 
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm) {
   *reg = (BuiltinRegistry){0};
+
   reg->type_bool = vm_intern_string(vm, "bool", 4);
   reg->type_nil = vm_intern_string(vm, "nil", 3);
   reg->type_number = vm_intern_string(vm, "number", 6);
@@ -217,4 +202,6 @@ void builtins_destroy(BuiltinRegistry *reg) {
   reg->type_object = NULL;
   reg->type_empty = NULL;
   reg->type_string = NULL;
+
+  reg->iterable = NULL;
 }

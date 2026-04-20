@@ -61,6 +61,8 @@ InterpretResult vm_interpret(VirtualMachine *vm, const char *source);
 void vm_runtime_error(VirtualMachine *vm, const char *format, ...)
     __attribute__((noreturn));
 
+void vm_begin_staging(VirtualMachine *vm);
+void vm_end_staging(VirtualMachine *vm);
 void vm_track_object(VirtualMachine *vm, Object *object);
 
 ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
@@ -68,6 +70,8 @@ ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
 
 void vm_define_native(VirtualMachine *vm, const char *name,
                       NativeFunc function);
+void vm_define_global(VirtualMachine *vm, const char *name, Value value);
+void vm_undefine_global(VirtualMachine *vm, const char *name);
 
 ObjectString *vm_new_string(VirtualMachine *vm, char *chars, int length,
                             uint32_t hash);

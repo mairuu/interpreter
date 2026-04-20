@@ -196,6 +196,20 @@ void vm_define_native(VirtualMachine *vm, const char *name,
   vm_end_staging(vm);
 }
 
+void vm_define_global(VirtualMachine *vm, const char *name, Value value) {
+  vm_begin_staging(vm);
+  Value string = OBJECT_VALUE(vm_intern_string(vm, name, strlen(name)));
+  ht_put(&vm->globals, string, value, &vm->al);
+  vm_end_staging(vm);
+}
+
+void vm_undefine_global(VirtualMachine *vm, const char *name) {
+  int length = (int)strlen(name);
+  ObjectString temp_str =
+      obj_string_create(name, length, hash_string(name, length));
+  ht_delete(&vm->globals, OBJECT_VALUE(&temp_str));
+}
+
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto);
 
 static Value load_constant(ConstantLoader *loader, Allocator *al,
@@ -911,6 +925,9 @@ static bool vm_run(VirtualMachine *vm) {
 
     case OP_DEFINE_GLOBAL: {
       ObjectString *name = READ_STRING();
+      if (ht_get(&vm->globals, OBJECT_VALUE(name))) {
+        vm_runtime_error(vm, "variable '%s' is already defined", name->chars);
+      }
       Value value = vm_peek(vm, 0);
       ht_put(&vm->globals, OBJECT_VALUE(name), value, &vm->al);
       vm_pop(vm);

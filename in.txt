@@ -1,7 +1,7 @@
 variant Result { Ok(v) Err(msg) }
 
 trait Updatable { tick }
-trait Iterable { has_next next }
+// trait Iterable { has_next next }
 trait Describable { describe }
 
 struct Point { x v }
