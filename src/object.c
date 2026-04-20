@@ -8,6 +8,29 @@
 #include <stdio.h>
 #include <string.h>
 
+const char *OBJECT_TYPE_NAMES[] = {
+    [OBJECT_STRING] = "STRING",
+    [OBJECT_FUNCTION] = "FUNCTION",
+    [OBJECT_UPVALUE] = "UPVALUE",
+    [OBJECT_CLOSURE] = "CLOSURE",
+    [OBJECT_NATIVE] = "NATIVE",
+    [OBJECT_STRUCT_DEFINITION] = "STRUCT_DEFINITION",
+    [OBJECT_STRUCT_INSTANCE] = "STRUCT_INSTANCE",
+    [OBJECT_TRAIT_DEFINITION] = "TRAIT_DEFINITION",
+    [OBJECT_IMPL] = "IMPL",
+    [OBJECT_TRAIT_OBJECT] = "TRAIT_OBJECT",
+    [OBJECT_BOUND_METHOD] = "BOUND_METHOD",
+    [OBJECT_VARIANT_DEFINITION] = "VARIANT_DEFINITION",
+    [OBJECT_VARIANT] = "VARIANT",
+};
+
+const char *object_type_to_string(ObjectType type) {
+  if (type < 0 || type >= OBJECT_TYPE_COUNT) {
+    return "UNKNOWN";
+  }
+  return OBJECT_TYPE_NAMES[type];
+}
+
 int obj_print(char *buf, size_t size, Object *obj) {
   switch (obj->type) {
   case OBJECT_STRING:
@@ -47,11 +70,14 @@ int obj_print(char *buf, size_t size, Object *obj) {
                     ((ObjectImpl *)obj)->trait->name->chars,
                     ((ObjectImpl *)obj)->struct_def->name->chars);
     break;
-  case OBJECT_TRAIT_OBJECT:
+  case OBJECT_TRAIT_OBJECT: {
+    ObjectTraitObject *trait_object = (ObjectTraitObject *)obj;
+    const char *for_struct = trait_object->impl->struct_def
+                                 ? trait_object->impl->struct_def->name->chars
+                                 : "<internal>";
     return snprintf(buf, size, "<trait object of %s for %s>",
-                    ((ObjectTraitObject *)obj)->impl->trait->name->chars,
-                    ((ObjectTraitObject *)obj)->impl->struct_def->name->chars);
-    break;
+                    trait_object->impl->trait->name->chars, for_struct);
+  }
   case OBJECT_BOUND_METHOD:
     return snprintf(buf, size, "<fn %s>",
                     ((ObjectBoundMethod *)obj)->method->function->name->chars);

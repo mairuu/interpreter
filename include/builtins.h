@@ -15,7 +15,9 @@ typedef struct {
   ObjectString *type_empty;
   ObjectString *type_string;
 
+  // populated by bootstrap code
   ObjectTraitDefinition *iterable;
+  ObjectTraitDefinition *describable;
 } BuiltinRegistry;
 
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm);

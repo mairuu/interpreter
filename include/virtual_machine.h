@@ -18,6 +18,11 @@ typedef struct {
 } ValueStack;
 
 typedef struct {
+  ObjectTraitDefinition *trait;
+  ObjectImpl *impl;
+} NativeImplEntry;
+
+typedef struct {
   ObjectFunction *function;
   ObjectUpvalue **upvalues; // for closures
 
@@ -36,6 +41,7 @@ typedef struct VirtualMachine {
   uint32_t gc_disabled; // gc is disabled when non-zero
 
   ObjectUpvalue *open_upvalues; // link-list of open upvalues
+  NativeImplEntry *native_impls[OBJECT_TYPE_COUNT];
 
   jmp_buf panic_jump;
   char panic_message[256];
@@ -49,6 +55,15 @@ typedef struct VirtualMachine {
 
 void vm_init(VirtualMachine *vm, Allocator al);
 void vm_destroy(VirtualMachine *vm);
+
+typedef struct {
+  const char *name;
+  NativeFunc fn;
+} NativeMethodDef;
+
+bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
+                             ObjectTraitDefinition *trait,
+                             const NativeMethodDef *methods, int count);
 
 typedef enum {
   INTERPRET_OK,

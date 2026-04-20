@@ -80,18 +80,15 @@ static void builtins_gc_visit(BuiltinRegistry *reg, GarbageCollector *gc) {
   for (size_t i = 0; i < sizeof(type_names) / sizeof(type_names[0]); i++) {
     gc_mark_object(gc, (Object *)type_names[i]);
   }
+
+  gc_mark_object(gc, (Object *)reg->iterable);
+  gc_mark_object(gc, (Object *)reg->describable);
 }
 
-static void gc_mark_roots(GarbageCollector *gc) {
+static void vm_gc_visit(GarbageCollector *gc) {
   for (Value *slot = gc->vm->stack.values; slot < gc->vm->stack.top; slot++) {
     gc_mark_value(gc, *slot);
   }
-
-  // frame already on stack no need to mark them here
-  //   for (int i = 0; i < gc->vm->frame_count; i++) {
-  //     CallFrame *frame = &gc->vm->frames[i];
-  //     gc_mark_object(gc, (Object *)frame->function);
-  //   }
 
   for (ObjectUpvalue *upvalue = gc->vm->open_upvalues; upvalue != NULL;
        upvalue = upvalue->next) {
@@ -99,6 +96,22 @@ static void gc_mark_roots(GarbageCollector *gc) {
   }
 
   gc_mark_hash_table(gc, &gc->vm->globals);
+
+  for (int i = 0; i < OBJECT_TYPE_COUNT; i++) {
+    NativeImplEntry *entry = gc->vm->native_impls[i];
+    if (entry == NULL) {
+      continue;
+    }
+    int impl_count = array_count(entry);
+    for (int j = 0; j < impl_count; j++) {
+      gc_mark_object(gc, (Object *)entry[j].trait);
+      gc_mark_object(gc, (Object *)entry[j].impl);
+    }
+  }
+}
+
+static void gc_mark_roots(GarbageCollector *gc) {
+  vm_gc_visit(gc);
   builtins_gc_visit(&gc->vm->builtins, gc);
 }
 

@@ -20,6 +20,7 @@ typedef enum {
   OBJECT_BOUND_METHOD,
   OBJECT_VARIANT_DEFINITION,
   OBJECT_VARIANT,
+  OBJECT_TYPE_COUNT // sentinel
 } ObjectType;
 
 struct Object {
@@ -93,6 +94,8 @@ typedef struct ObjectTraitDefinition {
   ObjectString *method_names[];
 } ObjectTraitDefinition;
 
+// if struct_def is NULL, this impl is a native impl for non-struct type (e.g.
+// native object)
 typedef struct ObjectImpl {
   Object object;
   ObjectTraitDefinition *trait;
@@ -131,6 +134,8 @@ typedef struct {
   int arity; // inlined payload length (from arm definition)
   Value payload[];
 } ObjectVariant;
+
+const char *object_type_to_string(ObjectType type);
 
 int obj_print(char *buf, size_t size, Object *obj);
 

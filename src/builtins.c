@@ -204,4 +204,5 @@ void builtins_destroy(BuiltinRegistry *reg) {
   reg->type_string = NULL;
 
   reg->iterable = NULL;
+  reg->describable = NULL;
 }

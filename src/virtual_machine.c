@@ -187,6 +187,83 @@ ObjectString *vm_intern_string(VirtualMachine *vm, const char *chars,
   return string;
 }
 
+static ObjectImpl *vm_find_native_impl(VirtualMachine *vm, ObjectType type,
+                                       ObjectTraitDefinition *trait) {
+  NativeImplEntry *entries = vm->native_impls[type];
+  int impl_count = array_count(entries);
+  for (int i = 0; i < impl_count; i++) {
+    if (entries[i].trait == trait) {
+      return entries[i].impl;
+    }
+  }
+  return NULL;
+}
+
+bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
+                             ObjectTraitDefinition *trait,
+                             const NativeMethodDef *methods, int count) {
+  NativeImplEntry *entries = vm->native_impls[type];
+  if (entries == NULL) {
+    entries = array_new(&vm->al, NativeImplEntry);
+    vm->native_impls[type] = entries;
+  }
+
+  if (count != trait->method_count) {
+    fprintf(stderr,
+            "method count mismatch when registering native impl for trait '%s' "
+            "and type '%s': expected %d, got %d\n",
+            trait->name->chars, object_type_to_string(type),
+            trait->method_count, count);
+    return false;
+  }
+
+  // check for duplicate registration
+  int impl_count = array_count(entries);
+  for (int i = 0; i < impl_count; i++) {
+    if (entries[i].trait != trait) {
+      continue;
+    }
+    fprintf(stderr,
+            "native impl for trait '%s' already registered for type '%s'\n",
+            trait->name->chars, object_type_to_string(type));
+    return false;
+  }
+
+  vm_begin_staging(vm);
+
+  ObjectImpl *impl = vm_new_impl(vm, trait, NULL);
+
+  for (int i = 0; i < count; i++) {
+    // find slot
+    int length = (int)strlen(methods[i].name);
+    uint32_t hash = hash_string(methods[i].name, length);
+    ObjectString method_name =
+        obj_string_create(methods[i].name, length, hash); // use for look up
+
+    int slot = obj_trait_find_slot(trait, &method_name);
+    if (slot == -1) {
+      fprintf(
+          stderr,
+          "method '%s' not found in trait '%s' when registering native impl "
+          "for type '%s'\n",
+          methods[i].name, trait->name->chars, object_type_to_string(type));
+      vm_end_staging(vm);
+      return false;
+    }
+
+    impl->methods[slot] = (Object *)vm_new_native(vm, methods[i].fn);
+  }
+
+  NativeImplEntry entry = {
+      .trait = trait,
+      .impl = impl,
+  };
+  array_push(entries, entry, &vm->al);
+
+  vm_end_staging(vm);
+  return true;
+}
+
 void vm_define_native(VirtualMachine *vm, const char *name,
                       NativeFunc function) {
   vm_begin_staging(vm);
@@ -432,14 +509,13 @@ static ObjectTraitObject *vm_cast_trait(VirtualMachine *vm, Value value,
                      trait->name->chars, instance->def->name->chars);
   }
 
-  // here we have opportunity for native object to implement traits
-  // if (IS_OBJECT(value)) {
-  //   Object *obj = AS_OBJECT(value);
-  //   ObjectImpl *impl = vm_find_native_impl(vm, obj->type, trait);
-  //   if (impl != NULL) {
-  //     return vm_new_trait_object(vm, obj, impl);
-  //   }
-  // }
+  if (IS_OBJECT(value)) {
+    Object *obj = AS_OBJECT(value);
+    ObjectImpl *impl = vm_find_native_impl(vm, obj->type, trait);
+    if (impl != NULL) {
+      return vm_new_trait_object(vm, obj, impl);
+    }
+  }
 
   vm_runtime_error(vm, "value does not satisfy the constraint");
   return NULL;
@@ -568,6 +644,9 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   ht_init(&vm->globals, &vm->al);
 
   vm->open_upvalues = NULL;
+  for (int i = 0; i < OBJECT_TYPE_COUNT; i++) {
+    vm->native_impls[i] = NULL;
+  }
 
   builtins_init(&vm->builtins, vm);
   builtins_register(&vm->builtins, vm);
@@ -579,6 +658,10 @@ void vm_destroy(VirtualMachine *vm) {
 
   ht_destroy(&vm->globals, &vm->al);
   ht_destroy(&vm->strings, &vm->al);
+
+  for (int i = 0; i < OBJECT_TYPE_COUNT; i++) {
+    array_free(vm->native_impls[i], &vm->al);
+  }
 
   while (vm->objects) {
     Object *next = vm->objects->next;
