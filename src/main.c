@@ -71,6 +71,7 @@ typedef struct {
 
 static void *_track_alloc(void *ctx, size_t size) {
   TrackAllocatorContext *track_ctx = (TrackAllocatorContext *)ctx;
+
   void *ptr = track_ctx->inner->alloc(track_ctx->inner, size);
   if (ptr) {
     track_ctx->allocated += size;

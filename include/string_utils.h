@@ -30,6 +30,9 @@ void str_destroy(String *str, Allocator *al);
 bool str_is_empty(String str);
 
 StringView sv_create(const char* chars, int length);
+StringView sv_from_str(String str);
+
+bool sv_equals(StringView a, StringView b);
 
 uint32_t hash_string(const char *str, int length);
 

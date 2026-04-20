@@ -1,7 +1,58 @@
-var a = match 1 {
-    1 => "one"
-    2 => "two"
-    _ => "three"
+variant Result { Ok(v) Err(msg) }
+
+trait Updatable { tick }
+trait Iterable { has_next next }
+trait Describable { describe }
+
+struct Point { x v }
+struct Range { current end }
+
+impl Updatable for Point {
+    fun tick(self) {
+        self.x = self.x + self.v
+    }
 }
 
-println(a)
+impl Describable for Point {
+    fun describe(self) {
+        if self.v < 1 {
+            return Result.Ok("i am a point at x = " + str(self.x))
+        }
+        return Result.Err("i am too fast!!!")
+    }
+}
+
+impl Iterable for Range {
+    fun has_next(self) {
+        return self.current < self.end
+    }
+    fun next(self) {
+        var next = self.current
+        self.current = self.current + 1
+        return next
+    }
+}
+
+fun iterate(it: Iterable, on_iterate) {
+    for it.has_next() {
+        on_iterate(it.next())
+    }
+}
+
+fun simulate(u: Updatable, it: Iterable) {
+    for ; it.has_next(); it.next() {
+        u.tick()
+    }
+}
+
+iterate(Range(0, 3), fun(i) {
+    var p = Point(i, i * i)
+    var d = p as Describable
+
+    match d.describe() {
+        is Result.Ok(v) => { println(v) }
+        is Result.Err(msg) => { panic(msg) }
+    }
+
+    simulate(p, Range(0, 10))
+})

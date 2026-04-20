@@ -14,6 +14,7 @@
 #include <assert.h>
 #include <complex.h>
 #include <setjmp.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -125,6 +126,22 @@ ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm,
       obj_trait_object_new(&vm->al, instance, impl);
   vm_track_object(vm, &trait_object->object);
   return trait_object;
+}
+
+ObjectVariantDefinition *vm_new_variant_definition(VirtualMachine *vm,
+                                                   ObjectString *name,
+                                                   int arm_count) {
+  ObjectVariantDefinition *def =
+      obj_variant_definition_new(&vm->al, name, arm_count);
+  vm_track_object(vm, &def->object);
+  return def;
+}
+
+ObjectVariant *vm_new_variant(VirtualMachine *vm, ObjectVariantDefinition *def,
+                              int tag, int arity) {
+  ObjectVariant *variant = obj_variant_new(&vm->al, def, tag, arity);
+  vm_track_object(vm, &variant->object);
+  return variant;
 }
 
 // todo: bound method
@@ -242,8 +259,25 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
     return OBJECT_VALUE(trait_def);
   }
   case RAW_VARIANT_DEF: {
-    assert(false && "variant definitions are not supported as constants yet");
-    break;
+    const RawVariantDef *raw_def = &raw_constant->as.variant_def;
+
+    ObjectString *name =
+        vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
+
+    int arm_count = array_count(raw_def->arms);
+    ObjectVariantDefinition *variant_def =
+        vm_new_variant_definition(vm, name, arm_count);
+
+    for (int i = 0; i < arm_count; i++) {
+      const RawVariantArm *raw_arm = &raw_def->arms[i];
+      VariantArm *arm = &variant_def->arms[i];
+      arm->name =
+          vm_intern_string(vm, raw_arm->name.chars, raw_arm->name.length);
+      // runtime do not need field names
+      arm->arity = array_count(raw_arm->fields);
+    }
+
+    return OBJECT_VALUE(variant_def);
   }
   default:
     assert(false && "invalid constant type");
@@ -647,6 +681,55 @@ static Object *vm_method_reference(VirtualMachine *vm, Value receiver,
   return fat->impl->methods[slot];
 }
 
+static bool vm_variant_arm_reference(VirtualMachine *vm, Value receiver,
+                                     uint8_t *ip, Chunk *chunk,
+                                     uint8_t name_idx, uint16_t cached_arm_id,
+                                     uint8_t arg_count) {
+  if (!IS_VARIANT_DEFINITION(receiver)) {
+    return false;
+  }
+
+  ObjectVariantDefinition *def = AS_VARIANT_DEFINITION(receiver);
+  ObjectString *name = AS_STRING(chunk->constants[name_idx]);
+
+  int arm_idx;
+  // cached_arm_id is 0 for uninitialized, arm indices start from 1
+  if (cached_arm_id != 0) {
+    arm_idx = (int)cached_arm_id - 1;
+  } else {
+    arm_idx = -1;
+    for (int i = 0; i < def->arm_count; i++) {
+      if (obj_string_equals(def->arms[i].name, name)) {
+        arm_idx = i;
+        break;
+      }
+    }
+    if (arm_idx == -1) {
+      vm_runtime_error(vm, "variant '%s' has no arm '%s'", def->name->chars,
+                       name->chars);
+      return true;
+    }
+    int start = (ip - 6) - chunk->instructions;
+    chunk_patch_short(chunk, start + 2, (uint16_t)(arm_idx + 1));
+  }
+
+  VariantArm *arm = &def->arms[arm_idx];
+  if (arg_count != arm->arity) {
+    vm_runtime_error(vm, "variant arm '%s' expects %d argument(s), got %d",
+                     arm->name->chars, arm->arity, arg_count);
+    return true;
+  }
+
+  ObjectVariant *variant = vm_new_variant(vm, def, arm_idx, arm->arity);
+  for (int i = 0; i < arm->arity; i++) {
+    variant->payload[i] = vm_peek(vm, arm->arity - 1 - i);
+  }
+
+  vm->stack.top -= arg_count + 1;
+  vm_push(vm, OBJECT_VALUE(variant));
+  return true;
+}
+
 static bool vm_bind_constraint(VirtualMachine *vm, Value target,
                                Value constraint, uint8_t param_idx) {
   (void)vm;
@@ -763,6 +846,11 @@ static bool vm_run(VirtualMachine *vm) {
       vm_push(vm, BOOL_VALUE(false));
       break;
 
+    case OP_SET: {
+      uint8_t distance = READ_BYTE();
+      vm->stack.top[-1 - distance] = vm_peek(vm, 0);
+      break;
+    }
     case OP_POP: {
       vm->stack.top--;
       break;
@@ -772,11 +860,46 @@ static bool vm_run(VirtualMachine *vm) {
       vm->stack.top--;
       break;
     }
-    case OP_MATCH: {
+    case OP_MATCH_LITERAL: {
       vm->stack.top[-1] =
           BOOL_VALUE(value_equals(vm_peek(vm, 1), vm_peek(vm, 0)));
       break;
     }
+    case OP_MATCH_STRUCT: {
+      assert(false && "not implemented: OP_MATCH_STRUCT");
+      break;
+    }
+    case OP_MATCH_VARIANT: {
+      uint8_t tag = READ_BYTE();
+      Value subject = vm_peek(vm, 1);
+      if (!IS_VARIANT(subject)) {
+        vm->stack.top[-1] = BOOL_VALUE(false);
+        break;
+      }
+      ObjectVariant *variant = AS_VARIANT(subject);
+      vm->stack.top[-1] = BOOL_VALUE(variant->tag == tag);
+      break;
+    }
+    case OP_MATCH_TRAIT: {
+      assert(false && "not implemented: OP_MATCH_TRAIT");
+      break;
+    }
+
+    case OP_BIND_VARIANT_FIELD: {
+      uint8_t field_idx = READ_BYTE();
+      Value variant_val = vm_peek(vm, 0);
+      assert(IS_VARIANT(variant_val) && "expected a variant value");
+
+      ObjectVariant *variant = AS_VARIANT(variant_val);
+      assert(field_idx < variant->arity && "field index out of bounds");
+      vm_push(vm, variant->payload[field_idx]);
+      break;
+    }
+    case OP_BIND_TRAIT: {
+      assert(false && "not implemented: OP_BIND_TRAIT");
+      break;
+    }
+
     case OP_DEFINE_GLOBAL: {
       ObjectString *name = READ_STRING();
       Value value = vm_peek(vm, 0);
@@ -938,6 +1061,12 @@ static bool vm_run(VirtualMachine *vm) {
       frame->ip = ip;
 
       Value receiver = vm_peek(vm, arg_count);
+
+      if (vm_variant_arm_reference(vm, receiver, ip, &frame->function->chunk,
+                                   name_idx, cached_trait, arg_count)) {
+        break;
+      }
+
       Object *method =
           vm_method_reference(vm, receiver, ip, &frame->function->chunk,
                               name_idx, cached_trait, cached_slot);
@@ -1047,6 +1176,11 @@ static bool vm_run(VirtualMachine *vm) {
       vm_push(vm, result);
       frame = &vm->frames[vm->frame_count - 1];
       ip = frame->ip;
+      break;
+    }
+    case OP_TRAP: {
+      // vm_runtime_error(vm, "explicit trap");
+      raise(SIGTRAP);
       break;
     }
 

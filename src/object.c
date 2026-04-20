@@ -56,6 +56,15 @@ int obj_print(char *buf, size_t size, Object *obj) {
     return snprintf(buf, size, "<fn %s>",
                     ((ObjectBoundMethod *)obj)->method->function->name->chars);
     break;
+  case OBJECT_VARIANT_DEFINITION:
+    return snprintf(buf, size, "<variant %s>",
+                    ((ObjectVariantDefinition *)obj)->name->chars);
+  case OBJECT_VARIANT:
+    return snprintf(buf, size, "<%s.%s>",
+                    ((ObjectVariant *)obj)->def->name->chars,
+                    ((ObjectVariant *)obj)
+                        ->def->arms[((ObjectVariant *)obj)->tag]
+                        .name->chars);
   default:
     assert(false && "unknown object type");
   }
@@ -348,6 +357,53 @@ void obj_bound_method_free(ObjectBoundMethod **obj, Allocator *al) {
   *obj = NULL;
 }
 
+static inline size_t variant_definition_size(int arm_count) {
+  return sizeof(ObjectVariantDefinition) + sizeof(VariantArm) * arm_count;
+}
+
+ObjectVariantDefinition *
+obj_variant_definition_new(Allocator *al, ObjectString *name, int arm_count) {
+  ObjectVariantDefinition *def = (ObjectVariantDefinition *)obj_new(
+      al, variant_definition_size(arm_count), OBJECT_VARIANT_DEFINITION);
+  def->name = name;
+  def->arm_count = arm_count;
+  for (int i = 0; i < arm_count; i++) {
+    def->arms[i].name = NULL;
+    def->arms[i].arity = 0;
+  }
+  return def;
+}
+
+void obj_variant_definition_free(ObjectVariantDefinition **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, variant_definition_size((*obj)->arm_count));
+  *obj = NULL;
+}
+
+static inline size_t variant_instance_size(int arity) {
+  return sizeof(ObjectVariant) + sizeof(Value) * arity;
+}
+
+ObjectVariant *obj_variant_new(Allocator *al, ObjectVariantDefinition *def,
+                               int tag, int arity) {
+  ObjectVariant *variant = (ObjectVariant *)obj_new(
+      al, variant_instance_size(arity), OBJECT_VARIANT);
+  variant->def = def;
+  variant->tag = tag;
+  variant->arity = arity;
+  return variant;
+}
+
+void obj_variant_free(ObjectVariant **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, variant_instance_size((*obj)->arity));
+  *obj = NULL;
+}
+
 void obj_free(Object **obj, Allocator *al) {
   switch ((*obj)->type) {
   case OBJECT_STRING:
@@ -382,6 +438,12 @@ void obj_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_BOUND_METHOD:
     obj_bound_method_free((ObjectBoundMethod **)obj, al);
+    break;
+  case OBJECT_VARIANT_DEFINITION:
+    obj_variant_definition_free((ObjectVariantDefinition **)obj, al);
+    break;
+  case OBJECT_VARIANT:
+    obj_variant_free((ObjectVariant **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

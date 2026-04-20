@@ -123,10 +123,24 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_FALSE:
     return simple_instruction("OP_FALSE", offset);
 
+  case OP_SET:
+    return byte_instruction("OP_SET", chunk, offset);
   case OP_POP:
     return simple_instruction("OP_POP", offset);
-  case OP_MATCH:
+  case OP_MATCH_LITERAL:
     return simple_instruction("OP_MATCH", offset);
+  case OP_MATCH_STRUCT:
+    return simple_instruction("OP_MATCH_STRUCT", offset);
+  case OP_MATCH_VARIANT:
+    return byte_instruction("OP_MATCH_VARIANT", chunk, offset);
+  case OP_MATCH_TRAIT:
+    return simple_instruction("OP_MATCH_TRAIT", offset);
+
+  case OP_BIND_VARIANT_FIELD:
+    return byte_instruction("OP_BIND_VARIANT_FIELD", chunk, offset);
+  case OP_BIND_TRAIT:
+    return simple_instruction("OP_BIND_TRAIT", offset);
+
   case OP_POP_SECOND:
     return simple_instruction("OP_POP_SECOND", offset);
   case OP_DEFINE_GLOBAL:
@@ -182,15 +196,6 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_CLOSE_UPVALUE:
     return simple_instruction("OP_CLOSE_UPVALUE", offset);
 
-  // case OP_STRUCT:
-  //   return constant_instruction("OP_STRUCT", chunk, offset);
-  // case OP_STRUCT_FIELD:
-  //   return constant_instruction("OP_STRUCT_FIELD", chunk, offset);
-
-  // case OP_TRAIT:
-  //   return constant_instruction("OP_TRAIT", chunk, offset);
-  // case OP_TRAIT_METHOD:
-  //   return constant_instruction("OP_TRAIT_METHOD", chunk, offset);
   case OP_CAST_TRAIT:
     return simple_instruction("OP_CAST_TRAIT", offset);
   case OP_CALL_METHOD:
@@ -202,6 +207,9 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
     return simple_instruction("OP_IMPL_METHOD", offset);
   case OP_IMPL_COMMIT:
     return simple_instruction("OP_IMPL_COMMIT", offset);
+
+  case OP_TRAP:
+    return simple_instruction("OP_TRAP", offset);
 
   default:
     printf("unknown opcode %d\n", instruction);

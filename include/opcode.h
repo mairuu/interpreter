@@ -18,9 +18,17 @@ typedef enum {
   OP_TRUE,
   OP_FALSE,
 
+  OP_SET, // set n-th value to top of stack
   OP_POP,
   OP_POP_SECOND,
-  OP_MATCH,
+
+  OP_MATCH_LITERAL,
+  OP_MATCH_STRUCT,
+  OP_MATCH_VARIANT,
+  OP_MATCH_TRAIT,
+
+  OP_BIND_VARIANT_FIELD, //
+  OP_BIND_TRAIT,         //
 
   OP_DEFINE_GLOBAL,
   OP_GET_GLOBAL,
@@ -50,6 +58,8 @@ typedef enum {
 
   OP_CALL,
   OP_RETURN,
+
+  OP_TRAP,
 
   // OP_PRINT,
 } OpCode;

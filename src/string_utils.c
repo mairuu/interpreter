@@ -34,6 +34,17 @@ StringView sv_create(const char *chars, int length) {
   return (StringView){chars, length};
 }
 
+StringView sv_from_str(String str) {
+  return sv_create(str.chars, str.length);
+}
+
+bool sv_equals(StringView a, StringView b) {
+  if (a.length != b.length) {
+    return false;
+  }
+  return memcmp(a.chars, b.chars, a.length) == 0;
+}
+
 uint32_t hash_string(const char *str, int length) {
   uint32_t hash = 2166136261u;
   for (int i = 0; i < length; i++) {

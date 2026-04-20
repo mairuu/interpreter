@@ -184,6 +184,22 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     gc_mark_object(gc, (Object *)bound_method->method);
     break;
   }
+  case OBJECT_VARIANT_DEFINITION: {
+    ObjectVariantDefinition *def = (ObjectVariantDefinition *)obj;
+    gc_mark_object(gc, &def->name->object);
+    for (int i = 0; i < def->arm_count; i++) {
+      gc_mark_object(gc, &def->arms[i].name->object);
+    }
+    break;
+  }
+  case OBJECT_VARIANT: {
+    ObjectVariant *v = (ObjectVariant *)obj;
+    gc_mark_object(gc, &v->def->object);
+    for (int i = 0; i < v->arity; i++) {
+      gc_mark_value(gc, v->payload[i]);
+    }
+    break;
+  }
   default:
     assert(false && "unexpected object type");
   }

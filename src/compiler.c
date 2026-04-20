@@ -1123,34 +1123,188 @@ static void statement_return(CompilerContext *ctx) {
 
 typedef enum {
   ARM_PATTERN_LITERAL,
+  ARM_PATTERN_STRUCT,
+  ARM_PATTERN_VARIANT,
+  ARM_PATTERN_TRAIT,
   ARM_PATTERN_WILDCARD, // _
 } ArmPatternKind;
 
 typedef struct {
+  Token name;
+  int index;
+} ArmBinding;
+
+typedef struct {
+  ArmBinding *items;
+  int count;
+} ArmBindingList;
+
+typedef struct {
   ArmPatternKind kind;
+  ArmBindingList bindings;
+  Token token;
   union {
-    Token literal_token; // for ARM_PATTERN_LITERAL
+    struct {
+      DefinitionEntry *definition;
+    } _struct;
+    struct {
+      int tag;
+      DefinitionEntry *definition;
+    } variant;
+    struct {
+      DefinitionEntry *definition;
+    } trait;
   };
 } ArmPattern;
 
 static bool token_is_underscore(Token *token) {
-  return token->type == TOKEN_IDENTIFIER && token->length == 1 && token->start[0] == '_';
+  return token->type == TOKEN_IDENTIFIER && token->length == 1 &&
+         token->start[0] == '_';
+}
+
+static int variant_get_arm_index(RawVariantDef *variant_def,
+                                 StringView arm_name) {
+  int arm_count = array_count(variant_def->arms);
+  for (int i = 0; i < arm_count; i++) {
+    if (sv_equals(sv_from_str(variant_def->arms[i].name), arm_name)) {
+      return i;
+    }
+  }
+  return -1; // not found
+}
+
+static ArmBindingList ctx_parse_arm_bindings(CompilerContext *ctx,
+                                             int expected_arity) {
+  ArmBindingList bindings = {0};
+
+  if (!ctx_check(ctx, TOKEN_LEFT_PAREN))
+    return bindings; // no bindings, ok
+
+  ctx_advance(ctx); // consume '('
+
+  ArmBinding *items;
+  array_init(items, ArmBinding, ctx->al);
+
+  int count = 0;
+  while (!ctx_check(ctx, TOKEN_RIGHT_PAREN) && !ctx_check(ctx, TOKEN_EOF)) {
+    if (count > 0)
+      ctx_consume(ctx, TOKEN_COMMA, "expect ',' between bindings.");
+
+    if (!ctx_consume(ctx, TOKEN_IDENTIFIER, "expect binding name."))
+      break;
+
+    ArmBinding b;
+    b.name = ctx->parser.previous;
+    b.index = count;
+    array_push(items, b, ctx->al);
+    count++;
+  }
+
+  ctx_consume(ctx, TOKEN_RIGHT_PAREN, "expect ')' after bindings.");
+
+  if (expected_arity >= 0 && count != expected_arity) {
+    ctx_error_at(ctx, &ctx->parser.previous,
+                 "binding count does not match variant arity.");
+  }
+
+  bindings.items = items;
+  bindings.count = count;
+  return bindings;
+}
+
+static Compiler *ctx_root_compiler(CompilerContext *ctx) {
+  Compiler *compiler = ctx->current_compiler;
+  while (compiler->enclosing != NULL) {
+    compiler = compiler->enclosing;
+  }
+  return compiler;
+}
+
+ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx, Token *token) {
+  ArmPattern pattern = {0};
+
+  DefinitionEntry *entry = deftable_get(&ctx->definition, sv_from_token(token));
+  if (entry == NULL) {
+    DIAGNOSTIC(ctx, "undefined definition in pattern",
+               {.token = *token, .label = "this definition is not defined"});
+    return pattern;
+  }
+
+  pattern.token = *token;
+  ctx_advance(ctx); // consume the definition name token
+
+  switch (entry->kind) {
+  case DEFKIND_STRUCT:
+    pattern._struct.definition = entry;
+    pattern.kind = ARM_PATTERN_STRUCT;
+    break;
+  case DEFKIND_TRAIT:
+    pattern.trait.definition = entry;
+    pattern.kind = ARM_PATTERN_TRAIT;
+    pattern.bindings = ctx_parse_arm_bindings(ctx, 1);
+    if (pattern.bindings.count > 1) {
+      ctx_error_at(ctx, &ctx->parser.previous,
+                   "trait pattern takes at most one binding.");
+    }
+
+    break;
+  case DEFKIND_VARIANT:
+    pattern.variant.definition = entry;
+    pattern.kind = ARM_PATTERN_VARIANT;
+
+    if (!ctx_match(ctx, TOKEN_DOT)) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "expect '.' after variant name in pattern.");
+      return pattern;
+    }
+    if (!ctx_check(ctx, TOKEN_IDENTIFIER)) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "expect variant case name after '.' in pattern.");
+      return pattern;
+    }
+
+    ctx_advance(ctx);
+    // find case index
+    RawVariantDef *variant_def =
+        &ctx_root_compiler(ctx)->proto->constants[entry->constant_index]
+             .as.variant_def;
+
+    pattern.variant.tag = variant_get_arm_index(
+        variant_def, sv_from_token(&ctx->parser.previous));
+
+    if (pattern.variant.tag == -1) {
+      ctx_error_at(ctx, &ctx->parser.current,
+                   "undefined variant case in pattern.");
+    }
+
+    int arity = array_count(variant_def->arms[pattern.variant.tag].fields);
+    pattern.bindings = ctx_parse_arm_bindings(ctx, arity);
+    break;
+  default:
+    assert(false && "unreachable");
+  }
+
+  return pattern;
 }
 
 ArmPattern ctx_parse_arm_pattern(CompilerContext *ctx) {
-  // {literal}
+  if (ctx_check(ctx, TOKEN_IS)) {
+    ctx_advance(ctx);
+    return ctx_parse_definition_pattern(ctx, &ctx->parser.current);
+  }
+
   ArmPattern pattern = {0};
 
   if (ctx_check(ctx, TOKEN_NUMBER) || ctx_check(ctx, TOKEN_STRING) ||
       ctx_check(ctx, TOKEN_TRUE) || ctx_check(ctx, TOKEN_FALSE) ||
       ctx_check(ctx, TOKEN_NIL)) {
     pattern.kind = ARM_PATTERN_LITERAL;
-    pattern.literal_token = ctx->parser.current;
+    pattern.token = ctx->parser.current;
     ctx_advance(ctx);
-  // } else if (ctx_match(ctx, TOKEN_UNDERSCORE)) {
   } else if (token_is_underscore(&ctx->parser.current)) {
     ctx_advance(ctx);
     pattern.kind = ARM_PATTERN_WILDCARD;
+    pattern.token = ctx->parser.previous;
   } else {
     ctx_error_at(ctx, &ctx->parser.current, "unsupported match arm pattern.");
   }
@@ -1163,19 +1317,49 @@ typedef enum {
   MATCH_MODE_EXPRESSION,
 } MatchMode;
 
-static void ctx_compile_match_arm_body(CompilerContext *ctx, MatchMode mode) {
+static void ctx_compile_match_arm_body(CompilerContext *ctx,
+                                       ArmPattern *pattern, MatchMode mode) {
   if (mode == MATCH_MODE_EXPRESSION) {
     expression(ctx);
+    ctx_emit_bytes(ctx, OP_SET, pattern->bindings.count + 1, OP_POP);
   } else {
-    if (!ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before match arm body.")) {
+    if (!ctx_consume(ctx, TOKEN_LEFT_BRACE,
+                     "expect '{' before match arm body.")) {
       // synchronize to next arm or end of match
       expression(ctx);
       return;
     }
-    ctx_begin_scope(ctx);
     statement_block(ctx);
-    ctx_end_scope(ctx);
   }
+}
+
+static void ctx_declare_variable_from_token(CompilerContext *ctx, Token *name);
+static void ctx_mark_initialized(CompilerContext *ctx);
+
+static void ctx_emit_pattern_bindings(CompilerContext *ctx,
+                                      ArmPattern *pattern) {
+  if (pattern->bindings.count == 0) {
+    return;
+  }
+
+  for (int i = 0; i < pattern->bindings.count; i++) {
+    ArmBinding *b = &pattern->bindings.items[i];
+
+    switch (pattern->kind) {
+    case ARM_PATTERN_VARIANT:
+      ctx_emit_bytes(ctx, OP_BIND_VARIANT_FIELD, (uint8_t)b->index);
+      break;
+    case ARM_PATTERN_TRAIT:
+      ctx_emit_byte(ctx, OP_BIND_TRAIT);
+      break;
+    default:
+      assert(false && "pattern kind does not support bindings");
+    }
+
+    ctx_declare_variable_from_token(ctx, &b->name);
+  }
+
+  ctx_mark_initialized(ctx);
 }
 
 static void ctx_compile_match_arm(CompilerContext *ctx, MatchMode mode,
@@ -1185,11 +1369,26 @@ static void ctx_compile_match_arm(CompilerContext *ctx, MatchMode mode,
 
   switch (pattern.kind) {
   case ARM_PATTERN_LITERAL:
-    ctx_emit_token_literal(ctx, &pattern.literal_token);
-    ctx_emit_byte(ctx, OP_MATCH); // [a, b] => [a, (a == b)]
+    ctx_emit_token_literal(ctx, &pattern.token);
+    ctx_emit_byte(ctx, OP_MATCH_LITERAL); // [a, b] => [a, (a == b)]
     break;
   case ARM_PATTERN_WILDCARD:
     ctx_emit_constant(ctx, RAW_BOOL_VALUE(true)); // [a, _] => [a, true]
+    break;
+  case ARM_PATTERN_STRUCT:
+    ctx_emit_bytes(ctx, OP_CONSTANT,
+                   pattern._struct.definition->constant_index);
+    ctx_emit_byte(ctx, OP_MATCH_STRUCT); // [a, S] => [a, (a is S)]
+    break;
+  case ARM_PATTERN_VARIANT:
+    ctx_emit_bytes(ctx, OP_CONSTANT,
+                   pattern.variant.definition->constant_index);
+    ctx_emit_bytes(ctx, OP_MATCH_VARIANT,
+                   pattern.variant.tag); // [a, V, i] => [a, (a is V_i)]
+    break;
+  case ARM_PATTERN_TRAIT:
+    ctx_emit_bytes(ctx, OP_CONSTANT, pattern.trait.definition->constant_index);
+    ctx_emit_byte(ctx, OP_MATCH_TRAIT); // [a, T] => [a, (a is T)]
     break;
   default:
     assert(false && "unhandled arm pattern kind");
@@ -1197,19 +1396,23 @@ static void ctx_compile_match_arm(CompilerContext *ctx, MatchMode mode,
   }
 
   int next_arm_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
-  ctx_emit_byte(ctx, OP_POP);
-
-  // ArmBinding binding = ctx_compile_pattern_bindings(ctx, &pattern);
+  ctx_emit_byte(ctx, OP_POP); // pop bool
 
   ctx_consume(ctx, TOKEN_FAT_ARROW, "expect '=>' after match arm pattern.");
 
-  ctx_compile_match_arm_body(ctx, mode);
-  // ctx_compile_match_arm_body(ctx, mode, binding);
+  ctx_begin_scope(ctx);
+  ctx_emit_pattern_bindings(ctx, &pattern);
+  ctx_compile_match_arm_body(ctx, &pattern, mode);
+  ctx_end_scope(ctx);
 
   array_push(end_jumps, ctx_emit_jump(ctx, OP_JUMP), ctx->al);
   ctx_patch_jump(ctx, next_arm_jump);
-  ctx_emit_byte(ctx, OP_POP);
+  ctx_emit_byte(ctx, OP_POP); // pop false path
+
+  array_free(pattern.bindings.items, ctx->al);
 }
+
+static void ctx_add_local(CompilerContext *ctx, Token *name);
 
 // mode == expression => match <expr> { <arm_pattern> => <expr> }
 // mode == statement  => match <expr> { <arm_pattern> => <block> }
@@ -1218,6 +1421,12 @@ static void ctx_compile_match(CompilerContext *ctx, MatchMode mode) {
   expression(ctx);
 
   ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' after 'match' expression.");
+
+  // this is needed for arm bindings to correclty resolve locals
+  ctx_begin_scope(ctx);
+  Token sentinel = {.start = "", .length = 0, .type = TOKEN_IDENTIFIER};
+  ctx_add_local(ctx, &sentinel);
+  ctx_mark_initialized(ctx); // mark sentinel initialized
 
   int *end_jumps;
   array_init(end_jumps, int, ctx->al);
@@ -1234,10 +1443,13 @@ static void ctx_compile_match(CompilerContext *ctx, MatchMode mode) {
   }
   array_free(end_jumps, ctx->al);
 
-  if (mode == MATCH_MODE_EXPRESSION) {
-    ctx_emit_byte(ctx, OP_POP_SECOND);
-  } else {
-    ctx_emit_bytes(ctx, OP_POP);
+  ctx->current_compiler
+      ->scope_depth--; // end scope without pop sentinel if mode is expression
+  // sentinel will be replaced by arm expression result
+
+  if (mode == MATCH_MODE_STATEMENT) {
+    ctx_emit_byte(ctx,
+                  OP_POP); // pop match expression result for statement match
   }
 }
 
@@ -1297,12 +1509,10 @@ static void ctx_add_local(CompilerContext *ctx, Token *name) {
   local->depth = -1;
 }
 
-static void ctx_declare_variable(CompilerContext *ctx) {
+static void ctx_declare_variable_from_token(CompilerContext *ctx, Token *name) {
   if (ctx->current_compiler->scope_depth == 0) {
     return;
   }
-
-  Token *name = &ctx->parser.previous;
 
   for (int i = ctx->current_compiler->local_count - 1; i >= 0; i--) {
     Local *local = &ctx->current_compiler->locals[i];
@@ -1319,6 +1529,10 @@ static void ctx_declare_variable(CompilerContext *ctx) {
   }
 
   ctx_add_local(ctx, name);
+}
+
+static void ctx_declare_variable(CompilerContext *ctx) {
+  ctx_declare_variable_from_token(ctx, &ctx->parser.previous);
 }
 
 static uint8_t ctx_parse_variable(CompilerContext *ctx, const char *err_msg) {
