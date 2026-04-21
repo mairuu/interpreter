@@ -198,25 +198,25 @@ static void ctx_destroy(CompilerContext *ctx) {
 }
 
 // for speculative parsing
-// typedef struct {
-//   Parser parser;
-//   size_t constants_count;
-// } Checkpoint;
+typedef struct {
+  Parser parser;
+  size_t constants_count;
+} Checkpoint;
 
-// static Checkpoint ctx_checkpoint(CompilerContext *ctx) {
-//   return (Checkpoint){.parser = ctx->parser,
-//                       .constants_count =
-//                           array_count(ctx->current_compiler->proto->constants)};
-// }
+static Checkpoint ctx_checkpoint(CompilerContext *ctx) {
+  return (Checkpoint){.parser = ctx->parser,
+                      .constants_count =
+                          array_count(ctx->current_compiler->proto->constants)};
+}
 
-// static void ctx_restore(CompilerContext *ctx, Checkpoint cp) {
-//   ctx->parser = cp.parser;
-//   while (array_count(ctx->current_compiler->proto.constants) >
-//          cp.constants_count) {
-//     RawConstant constant = array_pop(ctx->current_compiler->proto.constants);
-//     constant_destory(constant, ctx->al);
-//   }
-// }
+static void ctx_restore(CompilerContext *ctx, Checkpoint cp) {
+  ctx->parser = cp.parser;
+  while (array_count(ctx->current_compiler->proto->constants) >
+         cp.constants_count) {
+    RawConstant constant = array_pop(ctx->current_compiler->proto->constants);
+    constant_destory(constant, ctx->al);
+  }
+}
 
 static void ctx_begin_compile(CompilerContext *ctx, Compiler *compiler,
                               ProtoType type) {
@@ -410,6 +410,7 @@ static int ctx_add_raw_constant_variant(CompilerContext *ctx,
 
 static void ctx_register_definition(CompilerContext *ctx, Token name,
                                     DefinitionKind kind, int constant_index) {
+  assert(ctx->current_compiler->enclosing == NULL); // only allow registering definitions in the top-level compiler
   StringView name_str = sv_from_token(&name);
 
   DefinitionEntry *existing = deftable_get(&ctx->definition, name_str);
@@ -852,6 +853,7 @@ static void ctx_begin_scope(CompilerContext *ctx) {
 }
 
 static void ctx_end_scope(CompilerContext *ctx) {
+  assert(ctx->current_compiler->scope_depth > 0 && "scope underflow");
   Compiler *c = ctx->current_compiler;
   c->scope_depth--;
 
@@ -934,10 +936,89 @@ static void statement_if(CompilerContext *ctx) {
   ctx_patch_jump(ctx, exit_jump);
 }
 
+static Token ctx_synthetic_token(CompilerContext *ctx, const char *name,
+                                 size_t length) {
+  return (Token){.type = TOKEN_IDENTIFIER,
+                 .start = name,
+                 .length = length,
+                 .line_number = ctx->parser.current.line_number};
+}
+
+static void ctx_emit_get_global(CompilerContext *ctx, const char *name,
+                                size_t length) {
+  Token name_token = ctx_synthetic_token(ctx, name, length);
+  uint8_t constant = ctx_identifier_constant(ctx, &name_token);
+  ctx_emit_bytes(ctx, OP_GET_GLOBAL, constant);
+}
+
+static void ctx_emit_call_method(CompilerContext *ctx, const char *name,
+                                 size_t length, int arg_count) {
+  Token name_token = ctx_synthetic_token(ctx, name, length);
+  uint8_t constant = ctx_identifier_constant(ctx, &name_token);
+
+  ctx_emit_bytes(ctx, OP_CALL_METHOD, constant, 0, 0, 0, arg_count);
+}
+
+static void ctx_declare_variable_from_token(CompilerContext *ctx, Token *name);
+static void ctx_mark_initialized(CompilerContext *ctx);
+
+static void statement_for_in(CompilerContext *ctx, Token *var_token,
+                             Token *label) {
+  ctx_emit_get_global(ctx, "iter", 4);
+  expression(ctx);                 // collection
+  ctx_emit_bytes(ctx, OP_CALL, 1); // call iter(collection)
+
+  // declare __iter as hidden local
+  Token iter_token = ctx_synthetic_token(ctx, "__iter", 6);
+  ctx_declare_variable_from_token(ctx, &iter_token);
+  ctx_mark_initialized(ctx);
+
+  int iter_slot = ctx_resolve_local(ctx, ctx->current_compiler, &iter_token);
+  int loop_start = ctx_code_offset(ctx);
+
+  // condition: __iter.has_next()
+  ctx_emit_bytes(ctx, OP_GET_LOCAL, iter_slot);
+  ctx_emit_call_method(ctx, "has_next", 8, 0);
+  int exit_jump = ctx_emit_jump(ctx, OP_JUMP_IF_FALSE);
+  ctx_emit_byte(ctx, OP_POP);
+
+  Loop loop = {
+      .enclosing = ctx->current_loop,
+      .start_offset = loop_start,
+      .break_count = 0,
+      .scope_depth = ctx->current_compiler->scope_depth,
+      .label = label != NULL ? *label : (Token){0},
+  };
+  ctx->current_loop = &loop;
+
+  ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' after for-in collection.");
+  ctx_begin_scope(ctx);
+
+  // var x = __iter.next()
+  ctx_emit_bytes(ctx, OP_GET_LOCAL, iter_slot);
+  ctx_emit_call_method(ctx, "next", 4, 0);
+  ctx_declare_variable_from_token(ctx, var_token);
+  ctx_mark_initialized(ctx);
+
+  statement_block(ctx);
+  ctx_end_scope(ctx);
+
+  ctx_emit_loop(ctx, loop_start);
+  ctx_patch_jump(ctx, exit_jump);
+  ctx_emit_byte(ctx, OP_POP);
+
+  for (int i = 0; i < loop.break_count; i++)
+    ctx_patch_jump(ctx, loop.break_jumps[i]);
+
+  ctx->current_loop = loop.enclosing;
+}
+
 static void declaration_var(CompilerContext *ctx);
 
 static void statement_for(CompilerContext *ctx, Token *label) {
   ctx_begin_scope(ctx);
+
+  Checkpoint saved = ctx_checkpoint(ctx);
 
   // int loop_start = array_count(ctx_current_chunk(ctx)->code);
   int loop_start = ctx_code_offset(ctx);
@@ -949,11 +1030,31 @@ static void statement_for(CompilerContext *ctx, Token *label) {
   } else if (ctx_check(ctx, TOKEN_LEFT_BRACE)) {
     // infinite loop: `for {}`
   } else if (ctx_match(ctx, TOKEN_VAR)) {
-    // variable declaration: `for var i = 0; ...`
+    ctx_advance(ctx); // consume loop variable name
+    Token var_token = ctx->parser.previous;
+    if (ctx_match(ctx, TOKEN_IN)) {
+      statement_for_in(ctx, &var_token, label);
+      ctx_end_scope(ctx);
+      return;
+    }
+
+    ctx_restore(ctx, saved);
+    ctx_advance(ctx); // consume 'var'
     declaration_var(ctx);
     ctx_match(ctx, TOKEN_SEMICOLON); // optional
     loop_start = ctx_code_offset(ctx);
   } else {
+    saved = ctx_checkpoint(ctx);
+    ctx_advance(ctx);
+    Token var_token = ctx->parser.previous;
+    if (ctx_match(ctx, TOKEN_IN)) {
+      statement_for_in(ctx, &var_token, label);
+      ctx_end_scope(ctx);
+      return;
+    }
+
+    ctx_restore(ctx, saved);
+
     // ambiguous expression
     int expr_start = ctx_code_offset(ctx);
     expression(ctx);
@@ -1265,9 +1366,9 @@ ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx, Token *token) {
 
     ctx_advance(ctx);
     // find case index
-    RawVariantDef *variant_def =
-        &ctx_root_compiler(ctx)->proto->constants[entry->constant_index]
-             .as.variant_def;
+    RawVariantDef *variant_def = &ctx_root_compiler(ctx)
+                                      ->proto->constants[entry->constant_index]
+                                      .as.variant_def;
 
     pattern.variant.tag = variant_get_arm_index(
         variant_def, sv_from_token(&ctx->parser.previous));

@@ -82,7 +82,8 @@ static void builtins_gc_visit(BuiltinRegistry *reg, GarbageCollector *gc) {
   }
 
   gc_mark_object(gc, (Object *)reg->iterable);
-  gc_mark_object(gc, (Object *)reg->describable);
+  gc_mark_object(gc, (Object *)reg->into_iterable);
+  gc_mark_object(gc, (Object *)reg->array);
 }
 
 static void vm_gc_visit(GarbageCollector *gc) {
@@ -209,6 +210,16 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
     for (int i = 0; i < v->arity; i++) {
       gc_mark_value(gc, v->payload[i]);
     }
+    break;
+  }
+  case OBJECT_ARRAY: {
+    ObjectArray *array = (ObjectArray *)obj;
+    gc_mark_values(gc, array->values, array->length);
+    break;
+  }
+  case OBJECT_ARRAY_ITERATOR: {
+    ObjectArrayIterator *iter = (ObjectArrayIterator *)obj;
+    gc_mark_object(gc, (Object *)iter->array);
     break;
   }
   default:

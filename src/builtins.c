@@ -167,6 +167,22 @@ static Value native_readline(VirtualMachine *vm, int arg_count, Value *args) {
   return OBJECT_VALUE(string);
 }
 
+static Value native_array(VirtualMachine *vm, int arg_count, Value *args) {
+  vm_begin_staging(vm);
+  ObjectArray *array = vm_new_array(vm);
+  obj_array_reserve(array, arg_count, &vm->al);
+  for (int i = 0; i < arg_count; i++) {
+    array->values[i] = args[i];
+  }
+  array->length = arg_count;
+
+  ObjectTraitObject *trait_object = vm_new_trait_object(
+      vm, &array->object, vm->builtins.array_impl_obj_array);
+
+  vm_end_staging(vm);
+  return OBJECT_VALUE(trait_object);
+}
+
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm) {
   *reg = (BuiltinRegistry){0};
 
@@ -185,6 +201,7 @@ void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm) {
       {"println", native_println},   {"type", native_type},
       {"number", native_number},     {"str", native_str},
       {"readline", native_readline}, {"panic", native_panic},
+      {"array", native_array}
 
   };
 
@@ -204,5 +221,7 @@ void builtins_destroy(BuiltinRegistry *reg) {
   reg->type_string = NULL;
 
   reg->iterable = NULL;
-  reg->describable = NULL;
+  reg->into_iterable = NULL;
+  reg->array = NULL;
+  reg->array_impl_obj_array = NULL;
 }

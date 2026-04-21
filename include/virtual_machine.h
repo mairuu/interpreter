@@ -63,7 +63,7 @@ typedef struct {
 
 bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
                              ObjectTraitDefinition *trait,
-                             const NativeMethodDef *methods, int count);
+                             const NativeMethodDef *methods, int count, ObjectImpl **out_impl);
 
 typedef enum {
   INTERPRET_OK,
@@ -116,3 +116,14 @@ ObjectImpl *vm_new_impl(VirtualMachine *vm, ObjectTraitDefinition *trait,
 
 ObjectTraitObject *vm_new_trait_object(VirtualMachine *vm, Object *receiver,
                                        ObjectImpl *impl);
+
+ObjectVariantDefinition *vm_new_variant_definition(VirtualMachine *vm,
+                                                   ObjectString *name,
+                                                   int arm_count);
+
+ObjectVariant *vm_new_variant(VirtualMachine *vm, ObjectVariantDefinition *def,
+                              int tag, int arity);
+
+ObjectArray *vm_new_array(VirtualMachine *vm);
+
+ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm, ObjectArray *array);

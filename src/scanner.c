@@ -182,6 +182,8 @@ static TokenType identifier_type(Scanner *s) {
         return check_keyword(s, 2, 2, "pl", TOKEN_IMPL);
       case 's':
         return check_keyword(s, 2, 0, "", TOKEN_IS);
+      case 'n':
+        return check_keyword(s, 2, 0, "", TOKEN_IN);
       }
     }
     break;

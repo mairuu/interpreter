@@ -46,6 +46,7 @@ typedef enum {
   TOKEN_FOR,
   TOKEN_FUN,
   TOKEN_IF,
+  TOKEN_IN,
   TOKEN_IS,
   TOKEN_IMPL,
   TOKEN_MATCH,

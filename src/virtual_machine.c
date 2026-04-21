@@ -144,6 +144,18 @@ ObjectVariant *vm_new_variant(VirtualMachine *vm, ObjectVariantDefinition *def,
   return variant;
 }
 
+ObjectArray *vm_new_array(VirtualMachine *vm) {
+  ObjectArray *array = obj_array_new(&vm->al);
+  vm_track_object(vm, &array->object);
+  return array;
+}
+
+ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm, ObjectArray *array) {
+  ObjectArrayIterator *iterator = obj_array_iterator_new(&vm->al, array);
+  vm_track_object(vm, &iterator->object);
+  return iterator;
+}
+
 // todo: bound method
 // static ObjectBoundMethod *
 // vm_new_bound_method(VirtualMachine *vm, Value receiver, ObjectClosure
@@ -201,7 +213,9 @@ static ObjectImpl *vm_find_native_impl(VirtualMachine *vm, ObjectType type,
 
 bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
                              ObjectTraitDefinition *trait,
-                             const NativeMethodDef *methods, int count) {
+                             const NativeMethodDef *methods, int count, ObjectImpl **out_impl) {
+  assert(trait != NULL && "trait definition cannot be NULL");
+
   NativeImplEntry *entries = vm->native_impls[type];
   if (entries == NULL) {
     entries = array_new(&vm->al, NativeImplEntry);
@@ -259,6 +273,10 @@ bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
       .impl = impl,
   };
   array_push(entries, entry, &vm->al);
+
+  if (out_impl) {
+    *out_impl = impl;
+  }
 
   vm_end_staging(vm);
   return true;
@@ -511,13 +529,19 @@ static ObjectTraitObject *vm_cast_trait(VirtualMachine *vm, Value value,
 
   if (IS_OBJECT(value)) {
     Object *obj = AS_OBJECT(value);
+    if (IS_TRAIT_OBJECT(value)) {
+      obj = AS_TRAIT_OBJECT(value)->receiver; // unwrap
+    }
+
     ObjectImpl *impl = vm_find_native_impl(vm, obj->type, trait);
     if (impl != NULL) {
       return vm_new_trait_object(vm, obj, impl);
     }
   }
 
-  vm_runtime_error(vm, "value does not satisfy the constraint");
+  char value_type[32];
+  value_print(value_type, sizeof(value_type), value);
+  vm_runtime_error(vm, "%s does not implement trait '%s'", value_type, trait->name->chars);
   return NULL;
 }
 

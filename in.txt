@@ -1,7 +1,179 @@
-var name = "Moonlighting"
+println("// === basic for-in ===")
+var arr = array()
+arr.push(1)
+arr.push(2)
+arr.push(3)
 
-var d = name as Describable
-
-for var i = 0; i < 3; i = i + 1 {
-    println(d.describe())
+for x in arr {
+    println(x)
 }
+println("// expect: 1 2 3")
+
+println("// === for-in with var ===")
+for var x in arr {
+    println(x)
+}
+println("// expect: 1 2 3")
+
+println("// === nested for-in, inner shadows __iter ===")
+var a = array()
+a.push(10)
+a.push(20)
+var b = array()
+b.push(1)
+b.push(2)
+
+for x in a {
+    for y in b {
+        println(x + y)
+    }
+}
+println("// expect: 11 12 21 22")
+
+println("// === for-in, break ===")
+for x in arr {
+    if x == 2 { break }
+    println(x)
+}
+println("// expect: 1")
+
+println("// === for-in, continue ===")
+for x in arr {
+    if x == 2 { continue }
+    println(x)
+}
+println("// expect: 1 3")
+
+println("// === labeled break from inner loop ===")
+outer:
+for x in a {
+    for y in b {
+        if y == 2 { break outer }
+        println(x)
+        println(y)
+    }
+}
+println("// expect: 10 1")
+
+println("// === labeled continue on outer loop ===")
+outer:
+for x in arr {
+    for y in arr {
+        if y == 2 { continue outer }
+        println(x)
+        println(y)
+    }
+}
+println("// expect: 1 1  2 1  3 1")
+
+println("// === infinite for ===")
+var count = 0
+for {
+    count = count + 1
+    if count == 3 { break }
+}
+println(count)
+println("// expect: 3")
+
+println("// === for condition only ===")
+var i = 0
+for i < 3 {
+    i = i + 1
+}
+println(i)
+println("// expect: 3")
+
+println("// === for ; condition ; ===")
+for ; i < 6; {
+    i = i + 1
+}
+println(i)
+println("// expect: 6")
+
+println("// === for var init ; condition ; increment ===")
+for var j = 0; j < 3; j = j + 1 {
+    println(j)
+}
+println("// expect: 0 1 2")
+
+println("// === for init ; condition ; increment (no var) ===")
+var k = 0
+for k = 0; k < 3; k = k + 1 {
+    println(k)
+}
+println("// expect: 0 1 2")
+
+println("// === for-in over empty array ===")
+var empty = array()
+for x in empty {
+    println("should not print")
+}
+println("// expect: (nothing)")
+
+println("// === for-in, x is scoped ===")
+for x in arr {
+    // x visible here
+}
+// x not visible here — should be a compile error if referenced
+// println(x)
+
+println("// === labeled break, three levels deep ===")
+outermost:
+for x in arr {
+    middle:
+    for y in arr {
+        for z in arr {
+            if z == 2 { break middle }
+            println(z)
+        }
+        println("after inner") // should not print when z==2 breaks middle
+    }
+    println(x)
+}
+println("// expect: 1  x  1  x  1  x   (z==2 breaks middle each time, outer continues)")
+
+struct Range { current end }
+
+impl Iterable for Range {
+    fun has_next(self) {
+        return self.current < self.end
+    }
+
+    fun next(self) {
+        var next = self.current
+        self.current = self.current + 1
+        return next
+    }
+}
+
+impl IntoIterable for Range { // <- todo: each definition need to survive the compiling context
+    fun iter(self) {
+        return self
+    }
+}
+
+println("// === for-in with Range (custom Iterable) ===")
+for x in Range(0, 3) {
+    println(x)
+}
+println("// expect: 0 1 2")
+
+println("// === for-in, mutation of x does not affect iterator ===")
+for x in arr {
+    x = x + 100
+    println(x)
+}
+println("// expect: 101 102 103")
+
+println("// === nested labeled, break correct level ===")
+outer:
+for x in arr {
+    inner:
+    for y in arr {
+        if x == 2 and y == 2 { break outer }
+        if y == 3 { break inner }
+        println(x)
+        println(y)
+    }
+}
+println("// expect: 1 1  1 2  2 1")

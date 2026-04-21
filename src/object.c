@@ -31,72 +31,6 @@ const char *object_type_to_string(ObjectType type) {
   return OBJECT_TYPE_NAMES[type];
 }
 
-int obj_print(char *buf, size_t size, Object *obj) {
-  switch (obj->type) {
-  case OBJECT_STRING:
-    return snprintf(buf, size, "%s", ((ObjectString *)obj)->chars);
-  case OBJECT_FUNCTION:
-    return snprintf(buf, size, "<fn %s>",
-                    ((ObjectFunction *)obj)->name
-                        ? ((ObjectFunction *)obj)->name->chars
-                        : "_");
-    break;
-  case OBJECT_UPVALUE:
-    return snprintf(buf, size, "<upvalue>");
-    break;
-  case OBJECT_CLOSURE:
-    return snprintf(buf, size, "<fn %s>",
-                    ((ObjectClosure *)obj)->function->name
-                        ? ((ObjectClosure *)obj)->function->name->chars
-                        : "_");
-    break;
-  case OBJECT_NATIVE:
-    return snprintf(buf, size, "<native fn>");
-    break;
-  case OBJECT_STRUCT_DEFINITION:
-    return snprintf(buf, size, "<struct %s>",
-                    ((ObjectStructDefinition *)obj)->name->chars);
-    break;
-  case OBJECT_STRUCT_INSTANCE:
-    return snprintf(buf, size, "<instance of %s>",
-                    ((ObjectStructInstance *)obj)->def->name->chars);
-    break;
-  case OBJECT_TRAIT_DEFINITION:
-    return snprintf(buf, size, "<trait %s>",
-                    ((ObjectTraitDefinition *)obj)->name->chars);
-    break;
-  case OBJECT_IMPL:
-    return snprintf(buf, size, "<impl of %s for %s>",
-                    ((ObjectImpl *)obj)->trait->name->chars,
-                    ((ObjectImpl *)obj)->struct_def->name->chars);
-    break;
-  case OBJECT_TRAIT_OBJECT: {
-    ObjectTraitObject *trait_object = (ObjectTraitObject *)obj;
-    const char *for_struct = trait_object->impl->struct_def
-                                 ? trait_object->impl->struct_def->name->chars
-                                 : "<internal>";
-    return snprintf(buf, size, "<trait object of %s for %s>",
-                    trait_object->impl->trait->name->chars, for_struct);
-  }
-  case OBJECT_BOUND_METHOD:
-    return snprintf(buf, size, "<fn %s>",
-                    ((ObjectBoundMethod *)obj)->method->function->name->chars);
-    break;
-  case OBJECT_VARIANT_DEFINITION:
-    return snprintf(buf, size, "<variant %s>",
-                    ((ObjectVariantDefinition *)obj)->name->chars);
-  case OBJECT_VARIANT:
-    return snprintf(buf, size, "<%s.%s>",
-                    ((ObjectVariant *)obj)->def->name->chars,
-                    ((ObjectVariant *)obj)
-                        ->def->arms[((ObjectVariant *)obj)->tag]
-                        .name->chars);
-  default:
-    assert(false && "unknown object type");
-  }
-  return -1;
-}
-
 static void *obj_new(Allocator *al, size_t size, ObjectType type) {
   Object *obj = al_alloc(al, size);
   obj->type = type;
@@ -434,6 +368,166 @@ void obj_variant_free(ObjectVariant **obj, Allocator *al) {
   *obj = NULL;
 }
 
+ObjectArray *obj_array_new(Allocator *al) {
+  ObjectArray *array = OBJECT_NEW(al, ObjectArray, OBJECT_ARRAY);
+  array->length = 0;
+  array->capacity = 0;
+  array->values = NULL;
+  return array;
+}
+
+void obj_array_free(ObjectArray **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, (*obj)->values, sizeof(Value) * (*obj)->capacity);
+  al_free(al, *obj, sizeof(ObjectArray));
+  *obj = NULL;
+}
+
+void obj_array_reserve(ObjectArray *array, int capacity, Allocator *al) {
+  if (capacity <= array->capacity) {
+    return;
+  }
+  int new_capacity = array->capacity == 0 ? 4 : array->capacity;
+  while (new_capacity < capacity) {
+    new_capacity *= 2;
+  }
+
+  if (new_capacity == array->capacity) {
+    return;
+  }
+
+  Value *new_values = al_alloc(al, sizeof(Value) * new_capacity);
+  if (array->values) {
+    memcpy(new_values, array->values, sizeof(Value) * array->length);
+    al_free(al, array->values, sizeof(Value) * array->capacity);
+  }
+  array->values = new_values;
+  array->capacity = new_capacity;
+}
+
+bool obj_array_set(ObjectArray *array, int index, Value value) {
+  if (index < 0 || index >= array->length) {
+    return false;
+  }
+  array->values[index] = value;
+  return true;
+}
+
+bool obj_array_push(ObjectArray *array, Value value, Allocator *al) {
+  if (array->length >= array->capacity) {
+    obj_array_reserve(array, array->length + 1, al);
+  }
+  array->values[array->length++] = value;
+  return true;
+}
+
+Value obj_array_get(ObjectArray *array, int index) {
+  if (index < 0 || index >= array->length) {
+    return EMPTY_VALUE;
+  }
+  return array->values[index];
+}
+
+Value obj_array_pop(ObjectArray *array) {
+  if (array->length == 0) {
+    return EMPTY_VALUE;
+  }
+  return array->values[--array->length];
+}
+
+ObjectArrayIterator *obj_array_iterator_new(Allocator *al, ObjectArray *array) {
+  ObjectArrayIterator *iter =
+      OBJECT_NEW(al, ObjectArrayIterator, OBJECT_ARRAY_ITERATOR);
+  iter->array = array;
+  iter->index = 0;
+  return iter;
+}
+
+void obj_array_iterator_free(ObjectArrayIterator **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, sizeof(ObjectArrayIterator));
+  *obj = NULL;
+}
+
+int obj_print(char *buf, size_t size, Object *obj) {
+  switch (obj->type) {
+  case OBJECT_STRING:
+    return snprintf(buf, size, "%s", ((ObjectString *)obj)->chars);
+  case OBJECT_FUNCTION:
+    return snprintf(buf, size, "<fn %s>",
+                    ((ObjectFunction *)obj)->name
+                        ? ((ObjectFunction *)obj)->name->chars
+                        : "_");
+    break;
+  case OBJECT_UPVALUE:
+    return snprintf(buf, size, "<upvalue>");
+    break;
+  case OBJECT_CLOSURE:
+    return snprintf(buf, size, "<fn %s>",
+                    ((ObjectClosure *)obj)->function->name
+                        ? ((ObjectClosure *)obj)->function->name->chars
+                        : "_");
+    break;
+  case OBJECT_NATIVE:
+    return snprintf(buf, size, "<native fn>");
+    break;
+  case OBJECT_STRUCT_DEFINITION:
+    return snprintf(buf, size, "<struct %s>",
+                    ((ObjectStructDefinition *)obj)->name->chars);
+    break;
+  case OBJECT_STRUCT_INSTANCE:
+    return snprintf(buf, size, "<instance of %s>",
+                    ((ObjectStructInstance *)obj)->def->name->chars);
+    break;
+  case OBJECT_TRAIT_DEFINITION:
+    return snprintf(buf, size, "<trait %s>",
+                    ((ObjectTraitDefinition *)obj)->name->chars);
+    break;
+  case OBJECT_IMPL:
+    return snprintf(buf, size, "<impl of %s for %s>",
+                    ((ObjectImpl *)obj)->trait->name->chars,
+                    ((ObjectImpl *)obj)->struct_def->name->chars);
+    break;
+  case OBJECT_TRAIT_OBJECT: {
+    ObjectTraitObject *trait_object = (ObjectTraitObject *)obj;
+    const char *for_struct = trait_object->impl->struct_def
+                                 ? trait_object->impl->struct_def->name->chars
+                                 : "<internal>";
+    return snprintf(buf, size, "<trait object of %s for %s>",
+                    trait_object->impl->trait->name->chars, for_struct);
+  }
+  case OBJECT_BOUND_METHOD:
+    return snprintf(buf, size, "<fn %s>",
+                    ((ObjectBoundMethod *)obj)->method->function->name->chars);
+    break;
+  case OBJECT_VARIANT_DEFINITION:
+    return snprintf(buf, size, "<variant %s>",
+                    ((ObjectVariantDefinition *)obj)->name->chars);
+  case OBJECT_VARIANT:
+    return snprintf(buf, size, "<%s.%s>",
+                    ((ObjectVariant *)obj)->def->name->chars,
+                    ((ObjectVariant *)obj)
+                        ->def->arms[((ObjectVariant *)obj)->tag]
+                        .name->chars);
+  case OBJECT_ARRAY: {
+    ObjectArray *array = (ObjectArray *)obj;
+    return snprintf(buf, size, "<array [%d]>", array->length);
+  }
+  case OBJECT_ARRAY_ITERATOR: {
+    ObjectArrayIterator *iter = (ObjectArrayIterator *)obj;
+    return snprintf(buf, size, "<array.it [%d/%d]>", iter->index,
+                    iter->array->length);
+  }
+  default:
+    assert(false && "unknown object type");
+  }
+  return -1;
+}
+
 void obj_free(Object **obj, Allocator *al) {
   switch ((*obj)->type) {
   case OBJECT_STRING:
@@ -474,6 +568,12 @@ void obj_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_VARIANT:
     obj_variant_free((ObjectVariant **)obj, al);
+    break;
+  case OBJECT_ARRAY:
+    obj_array_free((ObjectArray **)obj, al);
+    break;
+  case OBJECT_ARRAY_ITERATOR:
+    obj_array_iterator_free((ObjectArrayIterator **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

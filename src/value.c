@@ -5,7 +5,7 @@
 #include <stdio.h>
 
 bool value_is_falsey(Value value) {
-  return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value));
+  return IS_NIL(value) || (IS_BOOL(value) && !AS_BOOL(value)) || IS_EMPTY(value);
 }
 
 bool value_equals(Value a, Value b) {

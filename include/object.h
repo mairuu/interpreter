@@ -20,6 +20,8 @@ typedef enum {
   OBJECT_BOUND_METHOD,
   OBJECT_VARIANT_DEFINITION,
   OBJECT_VARIANT,
+  OBJECT_ARRAY,
+  OBJECT_ARRAY_ITERATOR,
   OBJECT_TYPE_COUNT // sentinel
 } ObjectType;
 
@@ -135,6 +137,19 @@ typedef struct {
   Value payload[];
 } ObjectVariant;
 
+typedef struct {
+  Object object;
+  int length;
+  int capacity;
+  Value *values;
+} ObjectArray;
+
+typedef struct {
+  Object object;
+  ObjectArray *array;
+  int index;
+} ObjectArrayIterator;
+
 const char *object_type_to_string(ObjectType type);
 
 int obj_print(char *buf, size_t size, Object *obj);
@@ -161,6 +176,7 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define IS_VARIANT_DEFINITION(value)                                           \
   value_is_obj_type(value, OBJECT_VARIANT_DEFINITION)
 #define IS_VARIANT(value) value_is_obj_type(value, OBJECT_VARIANT)
+#define IS_ARRAY(value) value_is_obj_type(value, OBJECT_ARRAY)i
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_CSTRING(value) (((ObjectString *)AS_OBJECT(value))->chars)
@@ -177,6 +193,7 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define AS_VARIANT_DEFINITION(value)                                           \
   ((ObjectVariantDefinition *)AS_OBJECT(value))
 #define AS_VARIANT(value) ((ObjectVariant *)AS_OBJECT(value))
+#define AS_ARRAY(value) ((ObjectArray *)AS_OBJECT(value))
 
 // dispatch to the appropriate free function based on the object type
 void obj_free(Object **obj, Allocator *al);
@@ -241,3 +258,14 @@ void obj_variant_definition_free(ObjectVariantDefinition **obj, Allocator *al);
 ObjectVariant *obj_variant_new(Allocator *al, ObjectVariantDefinition *def,
                                int tag, int arity);
 void obj_variant_free(ObjectVariant **obj, Allocator *al);
+
+ObjectArray *obj_array_new(Allocator *al);
+void obj_array_free(ObjectArray **obj, Allocator *al);
+void obj_array_reserve(ObjectArray *array, int capacity, Allocator *al);
+bool obj_array_set(ObjectArray *array, int index, Value value);
+bool obj_array_push(ObjectArray *array, Value value, Allocator *al);
+Value obj_array_get(ObjectArray *array, int index);
+Value obj_array_pop(ObjectArray *array);
+
+ObjectArrayIterator *obj_array_iterator_new(Allocator *al, ObjectArray *array);
+void obj_array_iterator_free(ObjectArrayIterator **obj, Allocator *al);
