@@ -1,0 +1,269 @@
+fun assert(cond, msg) {
+  if !cond {
+    panic("FAIL: " + msg)
+  }
+  println("PASS: " + msg)
+}
+
+fun assert_eq(a, b, msg) {
+  if a != b {
+    println("actual", a, "expected", b)
+    panic("FAIL: " + msg)
+  }
+  println("PASS: " + msg)
+}
+
+fun assert_arr_eq(a, b, msg) {
+  assert_eq(a.length(), b.length(), msg + " (length)")
+  var i = 0
+  for i < a.length() {
+    assert_eq(a.get(i), b.get(i), msg + " (idx " + str(i) + ")")
+    i = i + 1
+  }
+}
+
+// ── base data ────────────────────────────────────────────────────────────────
+
+var arr = array()
+arr.push(1)
+arr.push(2)
+arr.push(3)
+
+// ── basic for-in ─────────────────────────────────────────────────────────────
+
+fun test_basic_for_in() {
+  var out = array()
+  for x in arr {
+    out.push(x)
+  }
+  assert_arr_eq(out, array(1,2,3), "basic for-in")
+}
+test_basic_for_in()
+
+// ── for-in with var ──────────────────────────────────────────────────────────
+
+fun test_for_in_var() {
+  var out = array()
+  for var x in arr {
+    out.push(x)
+  }
+  assert_arr_eq(out, array(1,2,3), "for-in with var")
+}
+test_for_in_var()
+
+// ── nested for-in ─────────────────────────────────────────────────────────────
+
+fun test_nested() {
+  var a = array(10,20)
+  var b = array(1,2)
+
+  var out = array()
+
+  for x in a {
+    for y in b {
+      out.push(x + y)
+    }
+  }
+
+  assert_arr_eq(out, array(11,12,21,22), "nested for-in")
+}
+test_nested()
+
+// ── break ────────────────────────────────────────────────────────────────────
+
+fun test_break() {
+  var out = array()
+
+  for x in arr {
+    if x == 2 { break }
+    out.push(x)
+  }
+
+  assert_arr_eq(out, array(1), "break stops loop")
+}
+test_break()
+
+// ── continue ─────────────────────────────────────────────────────────────────
+
+fun test_continue() {
+  var out = array()
+
+  for x in arr {
+    if x == 2 { continue }
+    out.push(x)
+  }
+
+  assert_arr_eq(out, array(1,3), "continue skips iteration")
+}
+test_continue()
+
+// ── labeled break ────────────────────────────────────────────────────────────
+
+fun test_labeled_break() {
+  var a = array(10,20)
+  var b = array(1,2)
+
+  var out = array()
+
+  outer:
+  for x in a {
+    for y in b {
+      if y == 2 { break outer }
+      out.push(x)
+      out.push(y)
+    }
+  }
+
+  assert_arr_eq(out, array(10,1), "labeled break exits outer")
+}
+test_labeled_break()
+
+// ── labeled continue ─────────────────────────────────────────────────────────
+
+fun test_labeled_continue() {
+  var out = array()
+
+  outer:
+  for x in arr {
+    for y in arr {
+      if y == 2 { continue outer }
+      out.push(x)
+      out.push(y)
+    }
+  }
+
+  assert_arr_eq(out, array(1,1, 2,1, 3,1), "labeled continue outer")
+}
+test_labeled_continue()
+
+// ── infinite loop ────────────────────────────────────────────────────────────
+
+fun test_infinite() {
+  var count = 0
+
+  for {
+    count = count + 1
+    if count == 3 { break }
+  }
+
+  assert_eq(count, 3, "infinite loop with break")
+}
+test_infinite()
+
+// ── condition-only loop ──────────────────────────────────────────────────────
+
+fun test_condition_only() {
+  var i = 0
+
+  for i < 3 {
+    i = i + 1
+  }
+
+  assert_eq(i, 3, "for condition only")
+}
+test_condition_only()
+
+// ── for ; condition ; ────────────────────────────────────────────────────────
+
+fun test_semicolon_condition() {
+  var i = 3
+
+  for ; i < 6; {
+    i = i + 1
+  }
+
+  assert_eq(i, 6, "for ; condition ;")
+}
+test_semicolon_condition()
+
+// ──  full for syntax ─────────────────────────────────────────────────────────
+
+fun test_full_for() {
+  var out = array()
+
+  for var j = 0; j < 3; j = j + 1 {
+    out.push(j)
+  }
+
+  assert_arr_eq(out, array(0,1,2), "for init;cond;inc")
+}
+test_full_for()
+
+// ── empty iteration ──────────────────────────────────────────────────────────
+
+fun test_empty() {
+  var empty = array()
+  var out = array()
+
+  for x in empty {
+    out.push(x)
+  }
+
+  assert_eq(out.length(), 0, "empty for-in produces nothing")
+}
+test_empty()
+
+// ── custom iterable (Range) ──────────────────────────────────────────────────
+
+struct Range { current end }
+
+impl Iterable for Range {
+  fun has_next(self) {
+    return self.current < self.end
+  }
+
+  fun next(self) {
+    var n = self.current
+    self.current = self.current + 1
+    return n
+  }
+}
+
+impl IntoIterable for Range {
+  fun iter(self) { return self }
+}
+
+fun test_range() {
+  var out = array()
+
+  for x in Range(0,3) {
+    out.push(x)
+  }
+
+  assert_arr_eq(out, array(0,1,2), "custom iterable range")
+}
+test_range()
+
+// ── mutation of loop var ─────────────────────────────────────────────────────
+
+fun test_mutation() {
+  var out = array()
+
+  for x in arr {
+    x = x + 100
+    out.push(x)
+  }
+
+  assert_arr_eq(out, array(101,102,103), "loop variable mutation")
+}
+test_mutation()
+
+// ── deep labeled break ───────────────────────────────────────────────────────
+
+fun test_deep_labels() {
+  var out = array()
+
+  outer:
+  for x in arr {
+    inner:
+    for y in arr {
+      if x == 2 and y == 2 { break outer }
+      if y == 3 { break inner }
+      out.push(x)
+      out.push(y)
+    }
+  }
+
+  assert_arr_eq(out, array(1,1, 1,2, 2,1), "nested labeled break levels")
+}
+test_deep_labels()

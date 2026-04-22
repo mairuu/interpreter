@@ -144,6 +144,7 @@ static void _deftable_grow_table(DefinitionTable *table, Allocator *al) {
   assert(new_capacity > 0);
 
   DefinitionTable new_table;
+  new_table.definitions = table->definitions; // keep same definitions array
   _deftable_alloc(&new_table, new_capacity, al);
 
   // Transfer ownership of entries to the new table
