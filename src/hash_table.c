@@ -12,6 +12,7 @@
 void ht_init(HashTable *table, Allocator *al) {
   (void)al; // unused
   table->count = 0;
+  table->alive = 0;
   table->capacity = 0;
   table->entries = NULL;
 }
@@ -166,13 +167,15 @@ static Entry *get_or_insert(HashTable *table, Value key, Allocator *al) {
     }
 
     if (is_tombstone(entry)) {
+      table->alive++; // resurrecting
       entry->key = key;
       return entry; // reuse tombstone slot
     }
 
     if (is_empty(entry)) {
-      entry->key = key;
       table->count++;
+      table->alive++;
+      entry->key = key;
       return entry; // found empty slot
     }
   }
@@ -198,6 +201,7 @@ void ht_delete(HashTable *table, Value key) {
     return;
   }
   mark_tombstone(entry);
+  table->alive--;
 }
 
 void hti_init(HashTableIterator *iter, HashTable *table) {

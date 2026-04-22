@@ -22,6 +22,8 @@ typedef enum {
   OBJECT_VARIANT,
   OBJECT_ARRAY,
   OBJECT_ARRAY_ITERATOR,
+  OBJECT_MAP,
+  OBJECT_MAP_ITERATOR,
   OBJECT_TYPE_COUNT // sentinel
 } ObjectType;
 
@@ -150,6 +152,18 @@ typedef struct {
   int index;
 } ObjectArrayIterator;
 
+typedef struct {
+  Object object;
+  HashTable table;
+} ObjectMap;
+
+typedef struct {
+  Object object;
+  ObjectMap *map;
+  ObjectArray *keys; // snapshot of keys
+  int index;
+} ObjectMapIterator;
+
 const char *object_type_to_string(ObjectType type);
 
 int obj_print(char *buf, size_t size, Object *obj);
@@ -269,3 +283,12 @@ Value obj_array_pop(ObjectArray *array);
 
 ObjectArrayIterator *obj_array_iterator_new(Allocator *al, ObjectArray *array);
 void obj_array_iterator_free(ObjectArrayIterator **obj, Allocator *al);
+
+ObjectMap *obj_map_new(Allocator *al);
+void obj_map_free(ObjectMap **obj, Allocator *al);
+bool obj_map_set(ObjectMap *map, Value key, Value value, Allocator *al);
+Value obj_map_get(ObjectMap *map, Value key);
+void obj_map_delete(ObjectMap *map, Value key);
+
+ObjectMapIterator *obj_map_iterator_new(Allocator *al, ObjectMap *map, ObjectArray *keys);
+void obj_map_iterator_free(ObjectMapIterator **obj, Allocator *al);

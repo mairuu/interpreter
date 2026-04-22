@@ -13,7 +13,8 @@ typedef struct {
 } Entry;
 
 typedef struct {
-  int count; // number of entries (excluding tombstones)
+  int count;
+  int alive;
   int capacity;
   Entry *entries;
 } HashTable;

@@ -1,0 +1,182 @@
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fun assert(cond, msg) {
+  if !cond {
+    panic("FAIL: " + msg)
+  }
+  println("PASS: " + msg)
+}
+
+fun assert_eq(a, b, msg) {
+  if a != b {
+    println("actual", a, "expected", b)
+    panic("FAIL: " + msg)
+  }
+  println("PASS: " + msg)
+}
+
+fun ok(v)  { return Result.Ok(v) }
+fun err(m) { return Result.Err(m) }
+
+// ── basic unwrap ─────────────────────────────────────────────────────────────
+
+fun test_basic() {
+  var r = ok(42)?
+  assert_eq(r, 42, "basic unwrap returns value")
+  return ok(nil)
+}
+test_basic()?
+
+// ── chained unwrap ───────────────────────────────────────────────────────────
+
+fun step_a() { return ok(10) }
+fun step_b() { return ok(step_a()? + 5) }
+fun step_c() { return ok(step_b()? * 2) }
+
+fun test_chain() {
+  var r = step_c()?
+  assert_eq(r, 30, "chained unwrap computes correctly")
+  return ok(nil)
+}
+test_chain()?
+
+// ── error bubbles one level ──────────────────────────────────────────────────
+
+fun will_fail() { return err("oops") }
+
+fun middle() {
+  var _ = will_fail()?
+  return ok("unreachable")
+}
+
+fun test_bubble() {
+  var r = middle()
+  match r {
+    Result.Ok(_)    => { panic("FAIL: error did not bubble") }
+    Result.Err(msg) => { assert_eq(msg, "oops", "error bubbles one level") }
+  }
+  return ok(nil)
+}
+test_bubble()?
+
+// ── error bubbles multiple levels ────────────────────────────────────────────
+
+fun level_c() { return err("deep error") }
+fun level_b() { var _ = level_c()? return ok(nil) }
+fun level_a() { var _ = level_b()? return ok(nil) }
+
+fun test_deep_bubble() {
+  var r = level_a()
+  match r {
+    Result.Ok(_)    => { panic("FAIL: deep error lost") }
+    Result.Err(msg) => { assert_eq(msg, "deep error", "error bubbles multiple levels") }
+  }
+  return ok(nil)
+}
+test_deep_bubble()?
+
+// ── unwrap inside loop ───────────────────────────────────────────────────────
+
+fun safe_double(n) {
+  if n > 100 { return err("too big") }
+  return ok(n * 2)
+}
+
+fun test_loop() {
+  var i = 0
+  var sum = 0
+
+  for i < 5 {
+    var v = safe_double(i)?
+    sum = sum + v
+    i = i + 1
+  }
+
+  assert_eq(sum, 0 + 2 + 4 + 6 + 8, "loop unwrap accumulates correctly")
+  return ok(nil)
+}
+test_loop()?
+
+// ── loop abort on error ──────────────────────────────────────────────────────
+
+fun safe_inc(n) {
+  if n >= 5 { return err("too big") }
+  return ok(n + 1)
+}
+
+fun test_loop_abort() {
+  var r = fun() {
+    var i = 0
+    var count = 0
+
+    for i < 10 {
+      var _ = safe_inc(i)?
+      count = count + 1
+      i = i + 1
+    }
+
+    return ok(count)
+  }()
+
+  match r {
+    Result.Ok(_)    => { panic("FAIL: loop should abort") }
+    Result.Err(msg) => {
+      assert_eq(msg, "too big", "loop abort propagates error")
+    }
+  }
+
+  return ok(nil)
+}
+test_loop_abort()?
+
+// ── unwrap inside closure ────────────────────────────────────────────────────
+
+fun test_closure_bubble() {
+  var inner = fun() {
+    var _ = err("from closure")?
+    return ok(nil)
+  }
+
+  var r = inner()
+
+  match r {
+    Result.Ok(_)    => { panic("FAIL: closure error not propagated") }
+    Result.Err(msg) => {
+      assert_eq(msg, "from closure", "closure propagates error")
+    }
+  }
+
+  return ok(nil)
+}
+test_closure_bubble()?
+
+// ── upvalue after unwrap ─────────────────────────────────────────────────────
+
+fun test_upvalue() {
+  var x = 99
+
+  var inner = fun() {
+    var _ = ok(x)?
+    return ok(x + 1)
+  }
+
+  var r = inner()?
+  assert_eq(r, 100, "upvalue survives unwrap")
+
+  return ok(nil)
+}
+test_upvalue()?
+
+// ── unwrap on non-Result (optional runtime error test) ───────────────────────
+
+// fun test_bad_unwrap() {
+//   var n = 42
+//   n?   // should runtime error
+// }
+
+// ── top-level Err behavior (optional) ────────────────────────────────────────
+
+// fun test_toplevel_err() {
+//   return err("top level bail")
+// }
+// test_toplevel_err()?

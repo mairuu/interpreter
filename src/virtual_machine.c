@@ -26,7 +26,8 @@
 
 #if defined(DEBUG_TRACE_EXECUTION) || defined(DEBUG_PRINT_CODE)
 #include "debug.h"
-
+#endif
+#if defined(DEBUG_TRACE_EXECUTION)
 static void print_val(Value value) {
   static char buf[256];
   value_print(buf, sizeof(buf), value);
@@ -154,6 +155,19 @@ ObjectArray *vm_new_array(VirtualMachine *vm) {
 ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm,
                                            ObjectArray *array) {
   ObjectArrayIterator *iterator = obj_array_iterator_new(&vm->al, array);
+  vm_track_object(vm, &iterator->object);
+  return iterator;
+}
+
+ObjectMap *vm_new_map(VirtualMachine *vm) {
+  ObjectMap *map = obj_map_new(&vm->al);
+  vm_track_object(vm, &map->object);
+  return map;
+}
+
+ObjectMapIterator *vm_new_map_iterator(VirtualMachine *vm, ObjectMap *map,
+                                       ObjectArray *keys) {
+  ObjectMapIterator *iterator = obj_map_iterator_new(&vm->al, map, keys);
   vm_track_object(vm, &iterator->object);
   return iterator;
 }

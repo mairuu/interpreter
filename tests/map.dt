@@ -1,0 +1,96 @@
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+fun assert(cond, msg) {
+  if !cond {
+    panic("FAIL: " + msg)
+  }
+  println("PASS: " + msg)
+}
+
+fun assert_eq(a, b, msg) {
+  if a != b {
+    println("actual", a, "expected", b)
+    panic("FAIL: " + msg)
+  }
+  println("PASS: " + msg)
+}
+
+// ── basic get / set / has / length ───────────────────────────────────────────
+
+var m = map()
+
+assert_eq(m.length(), 0, "empty map length is 0")
+assert(!m.has("x"),      "empty map has no keys")
+
+m.set("x", 10)
+m.set("y", 20)
+m.set("z", 30)
+
+assert_eq(m.length(), 3, "length after 3 inserts")
+assert(m.has("x"),       "has existing key x")
+assert(m.has("y"),       "has existing key y")
+assert(!m.has("nope"),   "has returns false for missing key")
+
+// ── get returns Result ────────────────────────────────────────────────────────
+
+var r = m.get("x")
+match r {
+  Result.Ok(v)  => { assert_eq(v, 10, "get Ok value for x") }
+  Result.Err(_) => { panic("FAIL: get x returned Err") }
+}
+
+var r2 = m.get("missing")
+match r2 {
+  Result.Ok(_)    => { panic("FAIL: get missing returned Ok") }
+  Result.Err(msg) => { assert(true, "get missing returned Err: " + str(msg)) }
+}
+
+// ── unwrap operator ───────────────────────────────────────────────────────────
+
+var v = m.get("y")?
+assert_eq(v, 20, "unwrap Ok value for y")
+
+// ── overwrite ─────────────────────────────────────────────────────────────────
+
+m.set("x", 99)
+assert_eq(m.get("x")?, 99, "overwrite x to 99")
+assert_eq(m.length(), 3,   "length unchanged after overwrite")
+
+// ── delete ────────────────────────────────────────────────────────────────────
+
+m.delete("y")
+assert_eq(m.length(), 2, "length after delete y")
+assert(!m.has("y"),      "y no longer present after delete")
+
+match m.get("y") {
+  Result.Ok(_)  => { panic("FAIL: get deleted key returned Ok") }
+  Result.Err(_) => { assert(true, "get deleted key returns Err") }
+}
+
+m.delete("nope")  // delete missing key — should not crash
+assert_eq(m.length(), 2, "length stable after deleting missing key")
+
+// ── value types ───────────────────────────────────────────────────────────────
+
+var tm = map()
+tm.set("num",  42)
+tm.set("bool", true)
+tm.set("nil",  nil)
+tm.set("str",  "hello")
+
+assert_eq(tm.get("num")?,  42,      "number value roundtrips")
+assert_eq(tm.get("bool")?, true,    "bool value roundtrips")
+assert_eq(tm.get("nil")?,  nil,     "nil value roundtrips")
+assert_eq(tm.get("str")?,  "hello", "string value roundtrips")
+
+// ── non-string keys ───────────────────────────────────────────────────────────
+
+var nk = map()
+nk.set(1,    "one")
+nk.set(2,    "two")
+nk.set(true, "yes")
+
+assert_eq(nk.get(1)?,    "one", "number key 1")
+assert_eq(nk.get(2)?,    "two", "number key 2")
+assert_eq(nk.get(true)?, "yes", "bool key true")
+assert(!nk.has(false),          "bool key false not present")

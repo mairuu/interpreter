@@ -83,8 +83,15 @@ static void builtins_gc_visit(BuiltinRegistry *reg, GarbageCollector *gc) {
 
   gc_mark_object(gc, (Object *)reg->iterable);
   gc_mark_object(gc, (Object *)reg->into_iterable);
+
   gc_mark_object(gc, (Object *)reg->result);
+
   gc_mark_object(gc, (Object *)reg->array);
+  gc_mark_object(gc, (Object *)reg->array_impl_obj_array);
+
+  gc_mark_object(gc, (Object *)reg->map);
+  gc_mark_object(gc, (Object *)reg->map_entry);
+  gc_mark_object(gc, (Object *)reg->map_impl_obj_map);
 }
 
 static void vm_gc_visit(GarbageCollector *gc) {
@@ -226,6 +233,17 @@ static void gc_blacken_object(GarbageCollector *gc, Object *obj) {
   case OBJECT_ARRAY_ITERATOR: {
     ObjectArrayIterator *iter = (ObjectArrayIterator *)obj;
     gc_mark_object(gc, (Object *)iter->array);
+    break;
+  }
+  case OBJECT_MAP: {
+    ObjectMap *map = (ObjectMap *)obj;
+    gc_mark_hash_table(gc, &map->table);
+    break;
+  }
+  case OBJECT_MAP_ITERATOR: {
+    ObjectMapIterator *iter = (ObjectMapIterator *)obj;
+    gc_mark_object(gc, (Object *)iter->map);
+    gc_mark_object(gc, (Object *)iter->keys);
     break;
   }
   default:

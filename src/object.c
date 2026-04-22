@@ -453,6 +453,49 @@ void obj_array_iterator_free(ObjectArrayIterator **obj, Allocator *al) {
   *obj = NULL;
 }
 
+ObjectMap *obj_map_new(Allocator *al) {
+  ObjectMap *map = OBJECT_NEW(al, ObjectMap, OBJECT_MAP);
+  ht_init(&map->table, al);
+  return map;
+}
+
+void obj_map_free(ObjectMap **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  ht_destroy(&(*obj)->table, al);
+  al_free(al, *obj, sizeof(ObjectMap));
+  *obj = NULL;
+}
+
+bool obj_map_set(ObjectMap *map, Value key, Value value, Allocator *al) {
+  return ht_put(&map->table, key, value, al);
+}
+
+Value obj_map_get(ObjectMap *map, Value key) {
+  Value *val = ht_get(&map->table, key);
+  return val ? *val : EMPTY_VALUE;
+}
+
+void obj_map_delete(ObjectMap *map, Value key) { ht_delete(&map->table, key); }
+
+ObjectMapIterator *obj_map_iterator_new(Allocator *al, ObjectMap *map,
+                                        ObjectArray *keys) {
+  ObjectMapIterator *iter =
+      OBJECT_NEW(al, ObjectMapIterator, OBJECT_MAP_ITERATOR);
+  iter->map = map;
+  iter->keys = keys;
+  return iter;
+}
+
+void obj_map_iterator_free(ObjectMapIterator **obj, Allocator *al) {
+  if (!*obj) {
+    return;
+  }
+  al_free(al, *obj, sizeof(ObjectMapIterator));
+  *obj = NULL;
+}
+
 int obj_print(char *buf, size_t size, Object *obj) {
   switch (obj->type) {
   case OBJECT_STRING:
@@ -522,6 +565,15 @@ int obj_print(char *buf, size_t size, Object *obj) {
     return snprintf(buf, size, "<array.it [%d/%d]>", iter->index,
                     iter->array->length);
   }
+  case OBJECT_MAP: {
+    ObjectMap *map = (ObjectMap *)obj;
+    return snprintf(buf, size, "<map [%d]>", map->table.count);
+  }
+  case OBJECT_MAP_ITERATOR: {
+    ObjectMapIterator *iter = (ObjectMapIterator *)obj;
+    return snprintf(buf, size, "<map.it [%d/%d]>", iter->index,
+                    iter->map->table.count);
+  }
   default:
     assert(false && "unknown object type");
   }
@@ -574,6 +626,12 @@ void obj_free(Object **obj, Allocator *al) {
     break;
   case OBJECT_ARRAY_ITERATOR:
     obj_array_iterator_free((ObjectArrayIterator **)obj, al);
+    break;
+  case OBJECT_MAP:
+    obj_map_free((ObjectMap **)obj, al);
+    break;
+  case OBJECT_MAP_ITERATOR:
+    obj_map_iterator_free((ObjectMapIterator **)obj, al);
     break;
   default:
     assert(false && "unknown object type");

@@ -183,6 +183,21 @@ static Value native_array(VirtualMachine *vm, int arg_count, Value *args) {
   return OBJECT_VALUE(trait_object);
 }
 
+static Value native_map(VirtualMachine *vm, int arg_count, Value *args) {
+  (void)args;
+  // todo: take map iterator as varargs to initialize the map with entries
+  if (arg_count != 0) {
+    vm_runtime_error(vm, "map() takes no arguments");
+    return NIL_VALUE;
+  }
+  vm_begin_staging(vm);
+  ObjectMap *map = vm_new_map(vm);
+  ObjectTraitObject *trait_object =
+      vm_new_trait_object(vm, &map->object, vm->builtins.map_impl_obj_map);
+  vm_end_staging(vm);
+  return OBJECT_VALUE(trait_object);
+}
+
 void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm) {
   *reg = (BuiltinRegistry){0};
 
@@ -196,13 +211,16 @@ void builtins_init(BuiltinRegistry *reg, VirtualMachine *vm) {
 
 void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm) {
   (void)reg;
-  static const BuiltinDef stdlib[] = {
-      {"clock", native_clock},       {"print", native_print},
-      {"println", native_println},   {"type", native_type},
-      {"number", native_number},     {"str", native_str},
-      {"readline", native_readline}, {"panic", native_panic},
-      {"array", native_array}
-
+  static const BuiltinDef stdlib[] = {{"clock", native_clock},
+                                      {"print", native_print},
+                                      {"println", native_println},
+                                      {"type", native_type},
+                                      {"number", native_number},
+                                      {"str", native_str},
+                                      {"readline", native_readline},
+                                      {"panic", native_panic},
+                                      {"array", native_array},
+                                      {"map", native_map}
   };
 
   int count = sizeof(stdlib) / sizeof(stdlib[0]);
@@ -213,16 +231,5 @@ void builtins_register(BuiltinRegistry *reg, VirtualMachine *vm) {
 }
 
 void builtins_destroy(BuiltinRegistry *reg) {
-  reg->type_bool = NULL;
-  reg->type_nil = NULL;
-  reg->type_number = NULL;
-  reg->type_object = NULL;
-  reg->type_empty = NULL;
-  reg->type_string = NULL;
-
-  reg->iterable = NULL;
-  reg->into_iterable = NULL;
-  reg->result = NULL;
-  reg->array = NULL;
-  reg->array_impl_obj_array = NULL;
+  *reg = (BuiltinRegistry){0};
 }

@@ -133,3 +133,7 @@ ObjectArray *vm_new_array(VirtualMachine *vm);
 
 ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm,
                                            ObjectArray *array);
+
+ObjectMap *vm_new_map(VirtualMachine *vm);
+ObjectMapIterator *vm_new_map_iterator(VirtualMachine *vm, ObjectMap *map,
+                                       ObjectArray *keys);
