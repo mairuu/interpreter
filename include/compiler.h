@@ -1,5 +1,6 @@
 #pragma once
 
+#include "definition.h"
 #include "memory.h"
 #include "string_utils.h"
 
@@ -11,30 +12,7 @@ typedef enum {
   RAW_NUMBER,
   RAW_STRING,
   RAW_FUNC,
-  RAW_STRUCT_DEF,
-  RAW_TRAIT_DEF,
-  RAW_VARIANT_DEF,
 } RawType;
-
-typedef struct {
-  String name;
-  String *fields;
-} RawStructDef;
-
-typedef struct {
-  String name;
-  String *methods;
-} RawTraitDef;
-
-typedef struct {
-  String name;
-  String *fields;
-} RawVariantArm;
-
-typedef struct {
-  String name;
-  RawVariantArm *arms;
-} RawVariantDef;
 
 typedef struct Proto Proto;
 
@@ -45,9 +23,6 @@ typedef struct RawConstant {
     double number;
     String string;
     Proto *proto;
-    RawStructDef struct_def;
-    RawTraitDef trait_def;
-    RawVariantDef variant_def;
   } as;
 } RawConstant;
 
@@ -76,12 +51,10 @@ typedef struct Proto {
   int *lines;
 } Proto;
 
-// void proto_init(Proto *proto, const char *name, Allocator *al);
-
 void proto_destroy(Proto *proto, Allocator *al);
 
-// void proto_write_byte(Proto *proto, uint8_t byte, int line, Allocator *al);
-
-// int proto_write_constant(Proto *proto, RawConstant constant, Allocator *al);
-
-Proto *compile(const char *source, Allocator *al);
+// return a compiled prototype, and definitions
+// out_def is shallow copy of in_def with new definitions added by the source,
+// *caller should free it after use*
+Proto *compile(const char *source, Definition *in_def, Definition **out_def,
+               Allocator *al);

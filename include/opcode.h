@@ -1,6 +1,7 @@
 #pragma once
 
 typedef enum {
+  OP_DEFINITION,
   OP_CONSTANT,
 
   OP_ADD,

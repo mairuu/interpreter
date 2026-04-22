@@ -93,6 +93,8 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   uint8_t instruction = chunk->instructions[offset];
 
   switch (instruction) {
+  case OP_DEFINITION:
+    return byte_instruction("OP_DEFINITION", chunk, offset);
   case OP_CONSTANT:
     return constant_instruction("OP_CONSTANT", chunk, offset);
 
@@ -139,7 +141,7 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_BIND_VARIANT_FIELD:
     return byte_instruction("OP_BIND_VARIANT_FIELD", chunk, offset);
   case OP_BIND_TRAIT:
-    return simple_instruction("OP_BIND_TRAIT", offset);
+    return byte_instruction("OP_BIND_TRAIT", chunk, offset);
 
   case OP_POP_SECOND:
     return simple_instruction("OP_POP_SECOND", offset);

@@ -7,6 +7,7 @@
 #include <threads.h>
 
 #include "compiler.h"
+#include "definition.h"
 #include "definition_table.h"
 #include "dynamic_array.h"
 #include "memory.h"
@@ -14,9 +15,6 @@
 #include "scanner.h"
 #include "string_utils.h"
 
-#define MAX_ASSIGNMENTS                                                        \
-  8 // maximum number of variables in a multiple assignment statement, e.g. `var
-    // a, b, c = 1, 2, 3`
 #define UINT8_COUNT UINT8_MAX + 1
 
 static StringView sv_from_token(Token *token) {
@@ -48,37 +46,8 @@ static void constant_destory(RawConstant constant, Allocator *al) {
     break;
   case RAW_FUNC:
     break;
-  case RAW_STRUCT_DEF: {
-    int field_count = array_count(constant.as.struct_def.fields);
-    for (int i = 0; i < field_count; i++) {
-      str_destroy(&constant.as.struct_def.fields[i], al);
-    }
-    array_free(constant.as.struct_def.fields, al);
-    str_destroy(&constant.as.struct_def.name, al);
-    break;
-  }
-  case RAW_TRAIT_DEF: {
-    int method_count = array_count(constant.as.trait_def.methods);
-    for (int i = 0; i < method_count; i++) {
-      str_destroy(&constant.as.trait_def.methods[i], al);
-    }
-    str_destroy(&constant.as.trait_def.name, al);
-    array_free(constant.as.trait_def.methods, al);
-    break;
-  }
-  case RAW_VARIANT_DEF:
-    int arm_count = array_count(constant.as.variant_def.arms);
-    for (int i = 0; i < arm_count; i++) {
-      str_destroy(&constant.as.variant_def.arms[i].name, al);
-      int field_count = array_count(constant.as.variant_def.arms[i].fields);
-      for (int j = 0; j < field_count; j++) {
-        str_destroy(&constant.as.variant_def.arms[i].fields[j], al);
-      }
-      array_free(constant.as.variant_def.arms[i].fields, al);
-    }
-    str_destroy(&constant.as.variant_def.name, al);
-    array_free(constant.as.variant_def.arms, al);
-    break;
+  default:
+    assert(false && "invalid constant type");
   }
 }
 
@@ -178,19 +147,21 @@ typedef struct {
 
   Loop *current_loop;
   Compiler *current_compiler;
+
   DefinitionTable definition;
 
   Allocator *al;
 } CompilerContext;
 
-static void ctx_init(CompilerContext *ctx, const char *source, Allocator *al) {
+static void ctx_init(CompilerContext *ctx, const char *source,
+                     Definition *definitions, Allocator *al) {
   ctx->source = source;
   parser_init(&ctx->parser, source);
   ctx->current_loop = NULL;
   ctx->current_compiler = NULL;
   ctx->al = al;
 
-  deftable_init(&ctx->definition, al);
+  deftable_init(&ctx->definition, definitions, al);
 }
 
 static void ctx_destroy(CompilerContext *ctx) {
@@ -392,25 +363,10 @@ static uint8_t ctx_make_constant(CompilerContext *ctx, RawConstant value) {
   return 0;
 }
 
-static int ctx_add_raw_constant_struct(CompilerContext *ctx, RawStructDef def) {
-  return ctx_make_constant(
-      ctx, (RawConstant){.type = RAW_STRUCT_DEF, .as.struct_def = def});
-}
-
-static int ctx_add_raw_constant_trait(CompilerContext *ctx, RawTraitDef def) {
-  return ctx_make_constant(
-      ctx, (RawConstant){.type = RAW_TRAIT_DEF, .as.trait_def = def});
-}
-
-static int ctx_add_raw_constant_variant(CompilerContext *ctx,
-                                        RawVariantDef def) {
-  return ctx_make_constant(
-      ctx, (RawConstant){.type = RAW_VARIANT_DEF, .as.variant_def = def});
-}
-
-static void ctx_register_definition(CompilerContext *ctx, Token name,
-                                    DefinitionKind kind, int constant_index) {
-  assert(ctx->current_compiler->enclosing == NULL); // only allow registering definitions in the top-level compiler
+static int ctx_register_definition(CompilerContext *ctx, Token name,
+                                   Definition def) {
+  assert(ctx->current_compiler->enclosing ==
+         NULL); // only allow registering definitions in the top-level compiler
   StringView name_str = sv_from_token(&name);
 
   DefinitionEntry *existing = deftable_get(&ctx->definition, name_str);
@@ -419,19 +375,17 @@ static void ctx_register_definition(CompilerContext *ctx, Token name,
         ctx, "definition already exists",
         {.token = existing->name_token, .label = "previous definition is here"},
         {.token = name, .label = "conflicting definition is here"});
-    return;
+    return -1;
   }
 
-  DefinitionEntry entry = {
-      .name = str_from_str(name.start, name.length, ctx->al),
-      .kind = kind,
-      .constant_index = constant_index,
-      .name_token = name,
-  };
-
-  if (!deftable_put(&ctx->definition, entry, ctx->al)) {
+  int index = deftable_register(&ctx->definition, &name, def, ctx->al);
+  if (index == -1) {
     ctx_error_at(ctx, &name, "failed to add definition to table.");
+  } else if (index >= UINT8_COUNT) {
+    ctx_error_at(ctx, &name, "too many definitions in one module.");
+    return -1;
   }
+  return index;
 }
 
 static void ctx_emit_constant(CompilerContext *ctx, RawConstant value) {
@@ -1244,18 +1198,8 @@ typedef struct {
   ArmPatternKind kind;
   ArmBindingList bindings;
   Token token;
-  union {
-    struct {
-      DefinitionEntry *definition;
-    } _struct;
-    struct {
-      int tag;
-      DefinitionEntry *definition;
-    } variant;
-    struct {
-      DefinitionEntry *definition;
-    } trait;
-  };
+  DefinitionEntry *def_entry;
+  int tag;
 } ArmPattern;
 
 static bool token_is_underscore(Token *token) {
@@ -1263,7 +1207,7 @@ static bool token_is_underscore(Token *token) {
          token->start[0] == '_';
 }
 
-static int variant_get_arm_index(RawVariantDef *variant_def,
+static int variant_get_arm_index(VariantDefinition *variant_def,
                                  StringView arm_name) {
   int arm_count = array_count(variant_def->arms);
   for (int i = 0; i < arm_count; i++) {
@@ -1313,34 +1257,41 @@ static ArmBindingList ctx_parse_arm_bindings(CompilerContext *ctx,
   return bindings;
 }
 
-static Compiler *ctx_root_compiler(CompilerContext *ctx) {
-  Compiler *compiler = ctx->current_compiler;
-  while (compiler->enclosing != NULL) {
-    compiler = compiler->enclosing;
+DefinitionEntry *resolve_symbol_as_definition(CompilerContext *ctx) {
+  Token name_token = ctx->parser.current;
+  Token *token = &name_token;
+  DefinitionEntry *entry = deftable_get(&ctx->definition, sv_from_token(token));
+  if (entry == NULL) {
+    ctx_error_at(ctx, token, "undefined symbol.");
+    return NULL;
   }
-  return compiler;
+  return entry;
 }
 
-ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx, Token *token) {
+ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx) {
   ArmPattern pattern = {0};
 
-  DefinitionEntry *entry = deftable_get(&ctx->definition, sv_from_token(token));
+  Token name_token = ctx->parser.current;
+  Token *token = &name_token;
+
+  DefinitionEntry *entry = resolve_symbol_as_definition(ctx);
   if (entry == NULL) {
     DIAGNOSTIC(ctx, "undefined definition in pattern",
                {.token = *token, .label = "this definition is not defined"});
     return pattern;
   }
+  Definition *def = &ctx->definition.definitions[entry->index];
 
   pattern.token = *token;
   ctx_advance(ctx); // consume the definition name token
 
-  switch (entry->kind) {
+  pattern.def_entry = entry;
+
+  switch (def->kind) {
   case DEFKIND_STRUCT:
-    pattern._struct.definition = entry;
     pattern.kind = ARM_PATTERN_STRUCT;
     break;
   case DEFKIND_TRAIT:
-    pattern.trait.definition = entry;
     pattern.kind = ARM_PATTERN_TRAIT;
     pattern.bindings = ctx_parse_arm_bindings(ctx, 1);
     if (pattern.bindings.count > 1) {
@@ -1350,7 +1301,6 @@ ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx, Token *token) {
 
     break;
   case DEFKIND_VARIANT:
-    pattern.variant.definition = entry;
     pattern.kind = ARM_PATTERN_VARIANT;
 
     if (!ctx_match(ctx, TOKEN_DOT)) {
@@ -1366,19 +1316,17 @@ ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx, Token *token) {
 
     ctx_advance(ctx);
     // find case index
-    RawVariantDef *variant_def = &ctx_root_compiler(ctx)
-                                      ->proto->constants[entry->constant_index]
-                                      .as.variant_def;
+    VariantDefinition *variant_def = &def->as.variant_def;
 
-    pattern.variant.tag = variant_get_arm_index(
-        variant_def, sv_from_token(&ctx->parser.previous));
+    pattern.tag = variant_get_arm_index(variant_def,
+                                        sv_from_token(&ctx->parser.previous));
 
-    if (pattern.variant.tag == -1) {
+    if (pattern.tag == -1) {
       ctx_error_at(ctx, &ctx->parser.current,
                    "undefined variant case in pattern.");
     }
 
-    int arity = array_count(variant_def->arms[pattern.variant.tag].fields);
+    int arity = array_count(variant_def->arms[pattern.tag].fields);
     pattern.bindings = ctx_parse_arm_bindings(ctx, arity);
     break;
   default:
@@ -1389,9 +1337,8 @@ ArmPattern ctx_parse_definition_pattern(CompilerContext *ctx, Token *token) {
 }
 
 ArmPattern ctx_parse_arm_pattern(CompilerContext *ctx) {
-  if (ctx_check(ctx, TOKEN_IS)) {
-    ctx_advance(ctx);
-    return ctx_parse_definition_pattern(ctx, &ctx->parser.current);
+  if (ctx_check(ctx, TOKEN_IDENTIFIER) && !token_is_underscore(&ctx->parser.current)) {
+    return ctx_parse_definition_pattern(ctx);
   }
 
   ArmPattern pattern = {0};
@@ -1451,7 +1398,7 @@ static void ctx_emit_pattern_bindings(CompilerContext *ctx,
       ctx_emit_bytes(ctx, OP_BIND_VARIANT_FIELD, (uint8_t)b->index);
       break;
     case ARM_PATTERN_TRAIT:
-      ctx_emit_byte(ctx, OP_BIND_TRAIT);
+      ctx_emit_bytes(ctx, OP_BIND_TRAIT, pattern->def_entry->index);
       break;
     default:
       assert(false && "pattern kind does not support bindings");
@@ -1477,18 +1424,16 @@ static void ctx_compile_match_arm(CompilerContext *ctx, MatchMode mode,
     ctx_emit_constant(ctx, RAW_BOOL_VALUE(true)); // [a, _] => [a, true]
     break;
   case ARM_PATTERN_STRUCT:
-    ctx_emit_bytes(ctx, OP_CONSTANT,
-                   pattern._struct.definition->constant_index);
+    ctx_emit_bytes(ctx, OP_DEFINITION, pattern.def_entry->index);
     ctx_emit_byte(ctx, OP_MATCH_STRUCT); // [a, S] => [a, (a is S)]
     break;
   case ARM_PATTERN_VARIANT:
-    ctx_emit_bytes(ctx, OP_CONSTANT,
-                   pattern.variant.definition->constant_index);
+    ctx_emit_bytes(ctx, OP_DEFINITION, pattern.def_entry->index);
     ctx_emit_bytes(ctx, OP_MATCH_VARIANT,
-                   pattern.variant.tag); // [a, V, i] => [a, (a is V_i)]
+                   pattern.tag); // [a, V] => [a, (a is V_i)]
     break;
   case ARM_PATTERN_TRAIT:
-    ctx_emit_bytes(ctx, OP_CONSTANT, pattern.trait.definition->constant_index);
+    ctx_emit_bytes(ctx, OP_DEFINITION, pattern.def_entry->index);
     ctx_emit_byte(ctx, OP_MATCH_TRAIT); // [a, T] => [a, (a is T)]
     break;
   default:
@@ -1688,13 +1633,20 @@ static void declaration_var(CompilerContext *ctx) {
     DefinitionEntry *existing =
         deftable_get(&ctx->definition, sv_from_token(&name));
     if (existing != NULL) {
+      Definition *def = &ctx->definition.definitions[existing->index];
       char buf[256];
       snprintf(
           buf, sizeof(buf),
           "'%.*s' is a %s definition and cannot be shadowed by a variable.",
-          name.length, name.start, definition_kind_name(existing->kind));
-      DIAGNOSTIC(ctx, buf, {existing->name_token, "definition declared here"},
-                 {name, "variable declared here"}, );
+          name.length, name.start, definition_kind_name(def->kind));
+
+      if (existing->name_token.start != NULL) {
+        DIAGNOSTIC(ctx, buf, {existing->name_token, "definition declared here"},
+                   {name, "variable declared here"}, );
+      } else {
+        ctx_error_at(ctx, &name, buf);
+      }
+
       ctx_advance(ctx); // skip initializer expression
       return;
     }
@@ -1758,13 +1710,19 @@ static int ctx_parse_parameter_list(CompilerContext *ctx, ProtoType type,
       DefinitionEntry *existing =
           deftable_get(&ctx->definition, sv_from_token(&name));
       if (existing != NULL) {
+        Definition *def = &ctx->definition.definitions[existing->index];
         char buf[256];
         snprintf(
             buf, sizeof(buf),
             "'%.*s' is a %s definition and cannot be shadowed by a parameter.",
-            name.length, name.start, definition_kind_name(existing->kind));
-        DIAGNOSTIC(ctx, buf, {existing->name_token, "definition declared here"},
-                   {name, "parameter declared here"}, );
+            name.length, name.start, definition_kind_name(def->kind));
+        if (existing->name_token.start != NULL) {
+          DIAGNOSTIC(ctx, buf,
+                     {existing->name_token, "definition declared here"},
+                     {name, "parameter declared here"}, );
+        } else {
+          ctx_error_at(ctx, &name, buf);
+        }
       }
     } while (ctx_match(ctx, TOKEN_COMMA));
   }
@@ -1848,9 +1806,12 @@ static void declaration_struct(CompilerContext *ctx) {
   Token name = ctx_consume_identifier(ctx, "expect struct name.");
   int struct_name_constant = ctx_identifier_constant(ctx, &name);
 
-  RawStructDef def;
+  Definition def = {0};
+  def.kind = DEFKIND_STRUCT;
   def.name = str_from_str(name.start, name.length, ctx->al);
-  def.fields = NULL;
+
+  StructDefinition *struct_def = &def.as.struct_def;
+  struct_def->fields = NULL;
 
   ctx_consume(ctx, TOKEN_LEFT_BRACE, "expect '{' before struct body.");
 
@@ -1879,18 +1840,16 @@ static void declaration_struct(CompilerContext *ctx) {
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after struct body.");
 
-  array_reserve(def.fields, field_count, ctx->al);
+  array_reserve(struct_def->fields, field_count, ctx->al);
   for (int i = 0; i < field_count; i++) {
     String field =
         str_from_str(field_names[i].start, field_names[i].length, ctx->al);
-    array_push(def.fields, field, ctx->al);
+    array_push(struct_def->fields, field, ctx->al);
   }
 
-  int const_idx = ctx_add_raw_constant_struct(ctx, def);
-  ctx_register_definition(ctx, name, DEFKIND_STRUCT, const_idx);
-
-  ctx_emit_bytes(ctx, OP_CONSTANT, (uint8_t)const_idx, OP_DEFINE_GLOBAL,
-                 *(uint8_t *)&struct_name_constant);
+  int def_idx = ctx_register_definition(ctx, name, def);
+  ctx_emit_bytes(ctx, OP_DEFINITION, (uint8_t)def_idx, OP_DEFINE_GLOBAL,
+                 (uint8_t)struct_name_constant);
 }
 
 #define MAX_TRAIT_METHODS 64
@@ -1904,9 +1863,12 @@ static void declaration_trait(CompilerContext *ctx) {
   Token name = ctx_consume_identifier(ctx, "expect trait name.");
   int trait_name_constant = ctx_identifier_constant(ctx, &name);
 
-  RawTraitDef def;
+  Definition def = {0};
+  def.kind = DEFKIND_TRAIT;
   def.name = str_from_str(name.start, name.length, ctx->al);
-  def.methods = NULL;
+
+  TraitDefinition *trait_def = &def.as.trait_def;
+  trait_def->methods = NULL;
 
   Token method_names[MAX_TRAIT_METHODS];
   int method_count = 0;
@@ -1936,18 +1898,16 @@ static void declaration_trait(CompilerContext *ctx) {
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after trait body.");
 
-  array_reserve(def.methods, method_count, ctx->al);
+  array_reserve(trait_def->methods, method_count, ctx->al);
   for (int i = 0; i < method_count; i++) {
     String method =
         str_from_str(method_names[i].start, method_names[i].length, ctx->al);
-    array_push(def.methods, method, ctx->al);
+    array_push(trait_def->methods, method, ctx->al);
   }
 
-  int const_idx = ctx_add_raw_constant_trait(ctx, def);
-  ctx_register_definition(ctx, name, DEFKIND_TRAIT, const_idx);
-
-  ctx_emit_bytes(ctx, OP_CONSTANT, (uint8_t)const_idx, OP_DEFINE_GLOBAL,
-                 *(uint8_t *)&trait_name_constant);
+  int def_idx = ctx_register_definition(ctx, name, def);
+  ctx_emit_bytes(ctx, OP_DEFINITION, (uint8_t)def_idx, OP_DEFINE_GLOBAL,
+                 (uint8_t)trait_name_constant);
 }
 
 static void declaration_impl(CompilerContext *ctx) {
@@ -2038,9 +1998,12 @@ static void declaration_variant(CompilerContext *ctx) {
   Token name = ctx_consume_identifier(ctx, "expect variant name.");
   int variant_name_constant = ctx_identifier_constant(ctx, &name);
 
-  RawVariantDef def;
+  Definition def = {0};
+  def.kind = DEFKIND_VARIANT;
   def.name = str_from_str(name.start, name.length, ctx->al);
-  def.arms = NULL;
+
+  VariantDefinition *variant_def = &def.as.variant_def;
+  variant_def->arms = NULL;
 
   Token arm_names[MAX_VARIANT_ARMS];
   int arm_count = 0;
@@ -2101,9 +2064,9 @@ static void declaration_variant(CompilerContext *ctx) {
 
   ctx_consume(ctx, TOKEN_RIGHT_BRACE, "expect '}' after variant body.");
 
-  array_reserve(def.arms, arm_count, ctx->al);
+  array_reserve(variant_def->arms, arm_count, ctx->al);
   for (int i = 0; i < arm_count; i++) {
-    RawVariantArm arm;
+    VariantArm arm;
     arm.name = str_from_str(arm_names[i].start, arm_names[i].length, ctx->al);
     arm.fields = NULL;
 
@@ -2115,14 +2078,12 @@ static void declaration_variant(CompilerContext *ctx) {
         array_push(arm.fields, field_name, ctx->al);
       }
     }
-    array_push(def.arms, arm, ctx->al);
+    array_push(variant_def->arms, arm, ctx->al);
   }
 
-  int const_idx = ctx_add_raw_constant_variant(ctx, def);
-  ctx_register_definition(ctx, name, DEFKIND_VARIANT, const_idx);
-
-  ctx_emit_bytes(ctx, OP_CONSTANT, (uint8_t)const_idx, OP_DEFINE_GLOBAL,
-                 *(uint8_t *)&variant_name_constant);
+  int def_idx = ctx_register_definition(ctx, name, def);
+  ctx_emit_bytes(ctx, OP_DEFINITION, (uint8_t)def_idx, OP_DEFINE_GLOBAL,
+                 (uint8_t)variant_name_constant);
 }
 
 static void declaration(CompilerContext *ctx) {
@@ -2389,9 +2350,10 @@ static void match(CompilerContext *ctx, bool can_assign) {
   ctx_compile_match(ctx, MATCH_MODE_EXPRESSION);
 }
 
-Proto *compile(const char *source, Allocator *al) {
+Proto *compile(const char *source, Definition *in_def, Definition **out_def,
+               Allocator *al) {
   CompilerContext ctx;
-  ctx_init(&ctx, source, al);
+  ctx_init(&ctx, source, in_def, al);
 
   Compiler compiler;
   ctx_begin_compile(&ctx, &compiler, PROTO_SCRIPT);
@@ -2407,6 +2369,10 @@ Proto *compile(const char *source, Allocator *al) {
     al_free_for(al, proto);
     ctx_destroy(&ctx);
     return NULL;
+  }
+
+  if (out_def) {
+    *out_def = deftable_claim(&ctx.definition, ctx.al);
   }
 
   ctx_destroy(&ctx);

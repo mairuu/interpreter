@@ -146,12 +146,6 @@ impl Iterable for Range {
     }
 }
 
-impl IntoIterable for Range { // <- todo: each definition need to survive the compiling context
-    fun iter(self) {
-        return self
-    }
-}
-
 println("// === for-in with Range (custom Iterable) ===")
 for x in Range(0, 3) {
     println(x)

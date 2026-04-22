@@ -109,6 +109,11 @@ static void vm_gc_visit(GarbageCollector *gc) {
       gc_mark_object(gc, (Object *)entry[j].impl);
     }
   }
+
+  int def_count = array_count(gc->vm->definitions);
+  for (int i = 0; i < def_count; i++) {
+    gc_mark_object(gc, gc->vm->definition_objects[i]);
+  }
 }
 
 static void gc_mark_roots(GarbageCollector *gc) {

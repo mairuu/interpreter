@@ -5,30 +5,37 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "definition.h"
+#include "dynamic_array.h"
 #include "memory.h"
-
-static const char *defnames[] = {
-    [DEFKIND_STRUCT] = "struct",
-    [DEFKIND_TRAIT] = "trait",
-    [DEFKIND_VARIANT] = "variant",
-};
-
-const char *definition_kind_name(DefinitionKind kind) {
-  if (kind < 0 || kind >= sizeof(defnames) / sizeof(defnames[0])) {
-    return "unknown";
-  }
-  return defnames[kind];
-}
+#include "scanner.h"
+#include "string_utils.h"
 
 #define TOMBSTONE_CHARS ((char *)-1)
 #define HIGH_WATER_MARK 0.75
 #define LOW_WATER_MARK 0.5
 
-void deftable_init(DefinitionTable *table, Allocator *al) {
-  (void)al; // unused
+void deftable_init(DefinitionTable *table, Definition *definitions,
+                   Allocator *al) {
   table->count = 0;
   table->capacity = 0;
   table->entries = NULL;
+  table->definitions = NULL;
+
+  int def_count = array_count(definitions);
+  if (def_count != 0) {
+    array_init(table->definitions, Definition, al);
+    array_reserve(table->definitions, def_count, al);
+    for (int i = 0; i < def_count; i++) {
+      DefinitionEntry entry = {
+          .name = sv_from_str(definitions[i].name),
+          .name_token = (Token){0},
+          .index = i,
+      };
+      deftable_put(table, entry, al);
+      array_push(table->definitions, definitions[i], al);
+    }
+  }
 }
 
 static inline bool is_empty(DefinitionEntry *entry) {
@@ -49,25 +56,19 @@ static inline void mark_tombstone(DefinitionEntry *entry) {
   entry->name.length = 0;
 }
 
-static inline bool string_equals_view(String a, StringView b) {
-  if (a.length != b.length)
-    return false;
-  if (a.length == 0)
-    return true;
-  return memcmp(a.chars, b.chars, a.length) == 0;
-}
-
 void deftable_destroy(DefinitionTable *table, Allocator *al) {
   if (table->capacity > 0) {
-    for (int i = 0; i < table->capacity; i++) {
-      DefinitionEntry *entry = &table->entries[i];
-      if (!is_empty(entry) && !is_tombstone(entry)) {
-        str_destroy(&entry->name, al);
-      }
-    }
     al_free(al, table->entries, sizeof(*(table->entries)) * table->capacity);
   }
-  deftable_init(table, al);
+  array_free(table->definitions, al);
+  *table = (DefinitionTable){0};
+}
+
+Definition *deftable_claim(DefinitionTable *table, Allocator *al) {
+  Definition *defs = table->definitions;
+  table->definitions = NULL;
+  deftable_destroy(table, al);
+  return defs;
 }
 
 // Core probe loop. Returns the target entry, a tombstone we can recycle, or an
@@ -84,7 +85,7 @@ static DefinitionEntry *find_slot(DefinitionTable *table, StringView name) {
       return tombstone != NULL ? tombstone : entry;
     }
 
-    if (!is_tombstone(entry) && string_equals_view(entry->name, name)) {
+    if (!is_tombstone(entry) && sv_equals(entry->name, name)) {
       return entry; // found exact match
     }
 
@@ -107,6 +108,14 @@ DefinitionEntry *deftable_get(DefinitionTable *table, StringView name) {
     return NULL;
   }
   return entry;
+}
+
+Definition *deftable_get_def(DefinitionTable *table, StringView name) {
+  DefinitionEntry *entry = deftable_get(table, name);
+  if (entry == NULL) {
+    return NULL;
+  }
+  return &table->definitions[entry->index];
 }
 
 static void _deftable_alloc(DefinitionTable *table, int capacity,
@@ -150,8 +159,6 @@ static void _deftable_grow_table(DefinitionTable *table, Allocator *al) {
     new_table.count++; // track used slots in the new table
   }
 
-  // Free the old entries array directly; do NOT use deftable_destroy
-  // because new_table now owns the strings.
   al_free(al, table->entries, sizeof(*(table->entries)) * table->capacity);
 
   assert(new_table.count == key_count);
@@ -166,8 +173,7 @@ bool deftable_put(DefinitionTable *table, DefinitionEntry entry,
     _deftable_grow_table(table, al);
   }
 
-  StringView view = {entry.name.chars, entry.name.length};
-  DefinitionEntry *target = find_slot(table, view);
+  DefinitionEntry *target = find_slot(table, entry.name);
 
   if (target == NULL) {
     return false;
@@ -175,10 +181,6 @@ bool deftable_put(DefinitionTable *table, DefinitionEntry entry,
 
   if (is_empty(target)) {
     table->count++; // only increment for truly empty slots, not tombstones
-  } else if (!is_tombstone(target)) {
-    // We are overwriting an existing active entry.
-    // We MUST free its old string to prevent memory leaks.
-    str_destroy(&target->name, al);
   }
 
   // target now safely takes ownership of the new entry payload
@@ -187,6 +189,7 @@ bool deftable_put(DefinitionTable *table, DefinitionEntry entry,
 }
 
 void deftable_delete(DefinitionTable *table, StringView name, Allocator *al) {
+  (void)al;
   if (table->capacity == 0)
     return;
 
@@ -195,9 +198,26 @@ void deftable_delete(DefinitionTable *table, StringView name, Allocator *al) {
     return; // nothing to delete
   }
 
-  // Free the string being removed
-  str_destroy(&entry->name, al);
   mark_tombstone(entry);
+}
+
+int deftable_register(DefinitionTable *table, Token *name_token, Definition def,
+                      Allocator *al) {
+  if (!table->definitions) {
+    array_init(table->definitions, Definition, al);
+  }
+  int index = array_count(table->definitions);
+  array_push(table->definitions, def, al);
+
+  DefinitionEntry entry = {
+      .name = sv_from_str(def.name),
+      .name_token = name_token ? *name_token : (Token){0},
+      .index = index,
+  };
+  if (!deftable_put(table, entry, al)) {
+    return -1;
+  }
+  return index;
 }
 
 void deftable_iter_init(DefinitionTableIterator *iter, DefinitionTable *table) {

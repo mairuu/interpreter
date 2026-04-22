@@ -3,6 +3,7 @@
 #include <setjmp.h>
 
 #include "builtins.h"
+#include "definition.h"
 #include "hash_table.h"
 #include "memory.h"
 #include "object.h"
@@ -43,6 +44,9 @@ typedef struct VirtualMachine {
   ObjectUpvalue *open_upvalues; // link-list of open upvalues
   NativeImplEntry *native_impls[OBJECT_TYPE_COUNT];
 
+  Definition *definitions;     // dynamic array
+  Object **definition_objects; // parallel dynamic array to definitions
+
   jmp_buf panic_jump;
   char panic_message[256];
 
@@ -63,7 +67,8 @@ typedef struct {
 
 bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
                              ObjectTraitDefinition *trait,
-                             const NativeMethodDef *methods, int count, ObjectImpl **out_impl);
+                             const NativeMethodDef *methods, int count,
+                             ObjectImpl **out_impl);
 
 typedef enum {
   INTERPRET_OK,
@@ -126,4 +131,5 @@ ObjectVariant *vm_new_variant(VirtualMachine *vm, ObjectVariantDefinition *def,
 
 ObjectArray *vm_new_array(VirtualMachine *vm);
 
-ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm, ObjectArray *array);
+ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm,
+                                           ObjectArray *array);

@@ -322,7 +322,7 @@ void obj_bound_method_free(ObjectBoundMethod **obj, Allocator *al) {
 }
 
 static inline size_t variant_definition_size(int arm_count) {
-  return sizeof(ObjectVariantDefinition) + sizeof(VariantArm) * arm_count;
+  return sizeof(ObjectVariantDefinition) + sizeof(VariantArm_) * arm_count;
 }
 
 ObjectVariantDefinition *

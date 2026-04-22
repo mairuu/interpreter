@@ -1,6 +1,6 @@
 DEFS :=
 # DEFS += -DDEBUG_PRINT_CODE
-# DEFS += -DDEBUG_TRACE_EXECUTION
+DEFS += -DDEBUG_TRACE_EXECUTION
 # DEFS += -DDEBUG_VERBOSE_ALLOC
 # DEFS += -DDEBUG_LOG_GC
 DEFS += -DDEBUG_STRESS_GC
@@ -35,6 +35,24 @@ DEPS     := $(SRCS:$(SRCDIR)/%.c=$(DEPDIR)/%.d)
 CCJSON   := compile_commands.json
 CCJSON_ENTRIES :=
 
+# cflags sentinel: recompile everything when flags change
+CFLAGS_SENTINEL := $(DEPDIR)/.cflags
+CFLAGS_CURRENT  := $(CC)|$(CFLAGS)|$(IFLAGS)
+
+# force the sentinel to be checked/updated before any compile
+$(CFLAGS_SENTINEL): FORCE
+	@mkdir -p $(DEPDIR)
+	@printf '%s' '$(CFLAGS_CURRENT)' > $@.tmp; \
+	 if ! cmp -s $@.tmp $@ 2>/dev/null; then \
+	   mv $@.tmp $@; \
+	   echo "flags changed -- triggering full recompile"; \
+	 else \
+	   rm $@.tmp; \
+	 fi
+
+.PHONY: FORCE
+FORCE:
+
 # default target
 .PHONY: all
 all: $(CCJSON) $(BUILDDIR)/$(TARGET)
@@ -44,8 +62,8 @@ $(BUILDDIR)/$(TARGET): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 	@echo "linked  --> $@"
 
-# compile
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c
+# compile  (depends on sentinel so flag changes force recompile)
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(CFLAGS_SENTINEL)
 	@mkdir -p $(BUILDDIR) $(DEPDIR)
 	$(CC) $(CFLAGS) $(IFLAGS) -MMD -MF $(DEPDIR)/$*.d -c $< -o $@
 	@echo "compiled $<"

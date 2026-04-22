@@ -3,6 +3,7 @@
 #include "builtins.h"
 #include "chunk.h"
 #include "compiler.h"
+#include "definition.h"
 #include "dynamic_array.h"
 #include "hash_table.h"
 #include "memory.h"
@@ -150,7 +151,8 @@ ObjectArray *vm_new_array(VirtualMachine *vm) {
   return array;
 }
 
-ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm, ObjectArray *array) {
+ObjectArrayIterator *vm_new_array_iterator(VirtualMachine *vm,
+                                           ObjectArray *array) {
   ObjectArrayIterator *iterator = obj_array_iterator_new(&vm->al, array);
   vm_track_object(vm, &iterator->object);
   return iterator;
@@ -213,7 +215,8 @@ static ObjectImpl *vm_find_native_impl(VirtualMachine *vm, ObjectType type,
 
 bool vm_register_native_impl(VirtualMachine *vm, ObjectType type,
                              ObjectTraitDefinition *trait,
-                             const NativeMethodDef *methods, int count, ObjectImpl **out_impl) {
+                             const NativeMethodDef *methods, int count,
+                             ObjectImpl **out_impl) {
   assert(trait != NULL && "trait definition cannot be NULL");
 
   NativeImplEntry *entries = vm->native_impls[type];
@@ -305,6 +308,82 @@ void vm_undefine_global(VirtualMachine *vm, const char *name) {
   ht_delete(&vm->globals, OBJECT_VALUE(&temp_str));
 }
 
+static Object *load_definition(VirtualMachine *vm, Definition *def) {
+  switch (def->kind) {
+
+  case DEFKIND_STRUCT:
+    const StructDefinition *raw_def = &def->as.struct_def;
+
+    uint16_t definition_id = vm_next_definition_id(vm);
+    ObjectString *name =
+        vm_intern_string(vm, def->name.chars, def->name.length);
+    ObjectStructDefinition *struct_def =
+        vm_new_struct_definition(vm, name, definition_id);
+
+    int field_count = array_count(raw_def->fields);
+    for (int i = 0; i < field_count; i++) {
+      ObjectString *field_name = vm_intern_string(vm, raw_def->fields[i].chars,
+                                                  raw_def->fields[i].length);
+      ht_put(&struct_def->fields, OBJECT_VALUE(field_name), NUMBER_VALUE(i),
+             &vm->al);
+    }
+    return (Object *)struct_def;
+  case DEFKIND_TRAIT: {
+    const TraitDefinition *raw_def = &def->as.trait_def;
+
+    uint16_t trait_id = vm_next_trait_id(vm);
+    int method_count = array_count(raw_def->methods);
+
+    ObjectString *name =
+        vm_intern_string(vm, def->name.chars, def->name.length);
+    ObjectTraitDefinition *trait_def =
+        vm_new_trait_definition(vm, name, trait_id, method_count);
+
+    for (int i = 0; i < method_count; i++) {
+      ObjectString *method_name = vm_intern_string(
+          vm, raw_def->methods[i].chars, raw_def->methods[i].length);
+      trait_def->method_names[i] = method_name;
+    }
+    return (Object *)trait_def;
+  }
+  case DEFKIND_VARIANT: {
+    const VariantDefinition *raw_def = &def->as.variant_def;
+
+    ObjectString *name =
+        vm_intern_string(vm, def->name.chars, def->name.length);
+
+    int arm_count = array_count(raw_def->arms);
+    ObjectVariantDefinition *variant_def =
+        vm_new_variant_definition(vm, name, arm_count);
+
+    for (int i = 0; i < arm_count; i++) {
+      const VariantArm *raw_arm = &raw_def->arms[i];
+      VariantArm_ *arm = &variant_def->arms[i];
+      arm->name =
+          vm_intern_string(vm, raw_arm->name.chars, raw_arm->name.length);
+      // runtime do not need field names
+      arm->arity = array_count(raw_arm->fields);
+    }
+
+    return (Object *)variant_def;
+  }
+  default:
+    assert(false && "invalid definition kind");
+  }
+  return NULL; // unreachable
+}
+
+static void vm_load_definitions(VirtualMachine *vm, Definition *defs,
+                                int count) {
+  vm_begin_staging(vm);
+  for (int i = 0; i < count; i++) {
+    Object *def_obj = load_definition(vm, &defs[i]);
+    array_push(vm->definition_objects, def_obj, &vm->al);
+    array_push(vm->definitions, defs[i], &vm->al);
+  }
+  vm_end_staging(vm);
+}
+
 static ObjectFunction *vm_load_proto(VirtualMachine *vm, Proto *proto);
 
 static Value load_constant(ConstantLoader *loader, Allocator *al,
@@ -332,62 +411,6 @@ static Value load_constant(ConstantLoader *loader, Allocator *al,
     Proto *proto = raw_constant->as.proto;
     ObjectFunction *function = vm_load_proto(vm, proto);
     return OBJECT_VALUE(function);
-  }
-  case RAW_STRUCT_DEF:
-    const RawStructDef *raw_def = &raw_constant->as.struct_def;
-
-    uint16_t definition_id = vm_next_definition_id(vm);
-    ObjectString *name =
-        vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
-    ObjectStructDefinition *struct_def =
-        vm_new_struct_definition(vm, name, definition_id);
-
-    int field_count = array_count(raw_def->fields);
-    for (int i = 0; i < field_count; i++) {
-      ObjectString *field_name = vm_intern_string(vm, raw_def->fields[i].chars,
-                                                  raw_def->fields[i].length);
-      ht_put(&struct_def->fields, OBJECT_VALUE(field_name), NUMBER_VALUE(i),
-             &vm->al);
-    }
-    return OBJECT_VALUE(struct_def);
-  case RAW_TRAIT_DEF: {
-    const RawTraitDef *raw_def = &raw_constant->as.trait_def;
-
-    uint16_t trait_id = vm_next_trait_id(vm);
-    int method_count = array_count(raw_def->methods);
-
-    ObjectString *name =
-        vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
-    ObjectTraitDefinition *trait_def =
-        vm_new_trait_definition(vm, name, trait_id, method_count);
-
-    for (int i = 0; i < method_count; i++) {
-      ObjectString *method_name = vm_intern_string(
-          vm, raw_def->methods[i].chars, raw_def->methods[i].length);
-      trait_def->method_names[i] = method_name;
-    }
-    return OBJECT_VALUE(trait_def);
-  }
-  case RAW_VARIANT_DEF: {
-    const RawVariantDef *raw_def = &raw_constant->as.variant_def;
-
-    ObjectString *name =
-        vm_intern_string(vm, raw_def->name.chars, raw_def->name.length);
-
-    int arm_count = array_count(raw_def->arms);
-    ObjectVariantDefinition *variant_def =
-        vm_new_variant_definition(vm, name, arm_count);
-
-    for (int i = 0; i < arm_count; i++) {
-      const RawVariantArm *raw_arm = &raw_def->arms[i];
-      VariantArm *arm = &variant_def->arms[i];
-      arm->name =
-          vm_intern_string(vm, raw_arm->name.chars, raw_arm->name.length);
-      // runtime do not need field names
-      arm->arity = array_count(raw_arm->fields);
-    }
-
-    return OBJECT_VALUE(variant_def);
   }
   default:
     assert(false && "invalid constant type");
@@ -506,6 +529,39 @@ static ObjectStructInstance *vm_extract_struct_instance(VirtualMachine *vm,
   return NULL;
 }
 
+static ObjectImpl *vm_find_impl_for(VirtualMachine *vm, Value value,
+                                        ObjectTraitDefinition *trait) {
+  if (IS_TRAIT_OBJECT(value)) {
+    ObjectTraitObject *trait_object = AS_TRAIT_OBJECT(value);
+    if (trait_object->impl->trait == trait) {
+      return trait_object->impl;
+    }
+  }
+
+  ObjectStructInstance *instance = vm_extract_struct_instance(vm, value);
+  if (instance != NULL) {
+    ObjectImpl *impl = obj_struct_definition_find_impl(instance->def, trait);
+    if (impl != NULL) {
+      return impl;
+    }
+
+    return NULL;
+  }
+
+  if (IS_OBJECT(value)) {
+    Object *obj = AS_OBJECT(value);
+    if (IS_TRAIT_OBJECT(value)) {
+      obj = AS_TRAIT_OBJECT(value)->receiver; // unwrap
+    }
+
+    ObjectImpl *impl = vm_find_native_impl(vm, obj->type, trait);
+    if (impl != NULL) {
+      return impl;
+    }
+  }
+  return NULL;
+}
+
 static ObjectTraitObject *vm_cast_trait(VirtualMachine *vm, Value value,
                                         ObjectTraitDefinition *trait) {
   if (IS_TRAIT_OBJECT(value)) {
@@ -541,7 +597,8 @@ static ObjectTraitObject *vm_cast_trait(VirtualMachine *vm, Value value,
 
   char value_type[32];
   value_print(value_type, sizeof(value_type), value);
-  vm_runtime_error(vm, "%s does not implement trait '%s'", value_type, trait->name->chars);
+  vm_runtime_error(vm, "%s does not implement trait '%s'", value_type,
+                   trait->name->chars);
   return NULL;
 }
 
@@ -664,6 +721,9 @@ void vm_init(VirtualMachine *vm, Allocator al) {
   vm->next_definition_id = 1;
   vm->next_trait_id = 1;
 
+  array_init(vm->definitions, Definition, &vm->al);
+  array_init(vm->definition_objects, Object *, &vm->al);
+
   ht_init(&vm->strings, &vm->al);
   ht_init(&vm->globals, &vm->al);
 
@@ -686,6 +746,14 @@ void vm_destroy(VirtualMachine *vm) {
   for (int i = 0; i < OBJECT_TYPE_COUNT; i++) {
     array_free(vm->native_impls[i], &vm->al);
   }
+
+  int def_count = array_count(vm->definitions);
+  for (int i = 0; i < def_count; i++) {
+    definition_destroy(&vm->definitions[i], &vm->al);
+  }
+
+  array_free(vm->definitions, &vm->al);
+  array_free(vm->definition_objects, &vm->al);
 
   while (vm->objects) {
     Object *next = vm->objects->next;
@@ -843,7 +911,7 @@ static bool vm_variant_arm_reference(VirtualMachine *vm, Value receiver,
     chunk_patch_short(chunk, start + 2, (uint16_t)(arm_idx + 1));
   }
 
-  VariantArm *arm = &def->arms[arm_idx];
+  VariantArm_ *arm = &def->arms[arm_idx];
   if (arg_count != arm->arity) {
     vm_runtime_error(vm, "variant arm '%s' expects %d argument(s), got %d",
                      arm->name->chars, arm->arity, arg_count);
@@ -914,6 +982,12 @@ static bool vm_run(VirtualMachine *vm) {
     uint8_t instruction = READ_BYTE();
 
     switch (instruction) {
+    case OP_DEFINITION: {
+      uint8_t def_idx = READ_BYTE();
+      Object *def_obj = vm->definition_objects[def_idx];
+      vm_push(vm, OBJECT_VALUE(def_obj));
+      break;
+    }
     case OP_CONSTANT: {
       Value constant = READ_CONSTANT();
       vm_push(vm, constant);
@@ -1011,7 +1085,13 @@ static bool vm_run(VirtualMachine *vm) {
       break;
     }
     case OP_MATCH_TRAIT: {
-      assert(false && "not implemented: OP_MATCH_TRAIT");
+      Value subject = vm_peek(vm, 1);
+      assert(IS_TRAIT_DEFINITION(vm_peek(vm, 0)) &&
+             "expected a trait definition constant");
+      ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(vm_peek(vm, 0));
+
+      vm->stack.top[-1] = BOOL_VALUE(vm_find_impl_for(vm, subject, trait) != NULL);
+
       break;
     }
 
@@ -1026,7 +1106,14 @@ static bool vm_run(VirtualMachine *vm) {
       break;
     }
     case OP_BIND_TRAIT: {
-      assert(false && "not implemented: OP_BIND_TRAIT");
+      uint8_t trait_idx = READ_BYTE();
+      Value subject = vm_peek(vm, 1);
+      Object *obj = vm->definition_objects[trait_idx];
+      assert(IS_TRAIT_DEFINITION(OBJECT_VALUE(obj)) &&
+             "expected a trait definition object");
+      ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(OBJECT_VALUE(obj));
+      ObjectTraitObject *trait_object = vm_cast_trait(vm, subject, trait);
+      vm_push(vm, OBJECT_VALUE(trait_object));
       break;
     }
 
@@ -1346,15 +1433,31 @@ static InterpretResult vm_execute_script(VirtualMachine *vm,
 }
 
 InterpretResult vm_interpret(VirtualMachine *vm, const char *source) {
-  Proto *proto = compile(source, &vm->al);
+  Definition *out_defs = NULL;
+  Proto *proto = compile(source, vm->definitions, &out_defs, &vm->al);
   if (proto == NULL) {
     return INTERPRET_COMPILE_ERROR;
   }
 
   if (setjmp(vm->panic_jump)) {
     vm_reset_stack(vm);
+    if (out_defs != NULL) {
+      array_free(out_defs, &vm->al);
+    }
     fprintf(stderr, "panic: %s\n", vm->panic_message);
     return INTERPRET_RUNTIME_ERROR;
+  }
+
+  if (out_defs) {
+    // load new definitions into the VM
+    int prev_count = array_count(vm->definitions);
+    int next_count = array_count(out_defs);
+    int new_count = next_count - prev_count;
+
+    Definition *new_defs = out_defs + prev_count;
+    vm_load_definitions(vm, new_defs, new_count);
+
+    array_free(out_defs, &vm->al);
   }
 
   ObjectFunction *function = vm_load_proto(vm, proto);

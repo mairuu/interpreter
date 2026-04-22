@@ -19,7 +19,13 @@ static const char *PRELUDE_ITERABLE =
     "__builtin_bind(__BUILTIN_ITERABLE, Iterable)\n"
     "trait IntoIterable { iter }\n"
     "__builtin_bind(__BUILTIN_INTO_ITERABLE, IntoIterable)\n"
-    "fun iter(v: IntoIterable) { return v.iter() as Iterable }\n";
+    "fun iter(v) {"
+        "return match v {"
+            "Iterable(t) => t "
+            "IntoIterable(t) => t.iter() as Iterable "
+            "_ => panic(v, \"is not iterable\") "
+        "}"
+    "}\n";
 
 static const char *PRELUDE_ARRAY = "trait Array { push pop get set length }\n"
                                    "__builtin_bind(__BUILTIN_ARRAY, Array)\n";

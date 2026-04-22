@@ -1,52 +1,50 @@
 #pragma once
 
+// internal usage for compiler
+
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "definition.h"
 #include "memory.h"
 #include "scanner.h"
 #include "string_utils.h"
 
 #define DEFTABLE_INITIAL_CAPACITY 8
 
-typedef enum {
-  DEFKIND_STRUCT,
-  DEFKIND_TRAIT,
-  DEFKIND_VARIANT,
-} DefinitionKind;
-
 typedef struct {
-  String name; // The entry owns this String allocation
-  DefinitionKind kind;
-  Token name_token;   // for error reporting
-  int constant_index; // into the constant pool
+  StringView name;
+  Token name_token;
+  int index; // index into the definitions array
 } DefinitionEntry;
 
 typedef struct {
+  Definition *definitions;
   DefinitionEntry *entries;
-  int count; // count of used slots (active + tombstones)
+  int count;
   int capacity;
 } DefinitionTable;
 
-const char *definition_kind_name(DefinitionKind kind);
+// shallow copy of definitions array and seed the lookup table
+void deftable_init(DefinitionTable *table, Definition *definitions,
+                   Allocator *al);
 
-void deftable_init(DefinitionTable *table, Allocator *al);
-
-// Destroys the table AND frees the strings owned by all active entries
+// release internal resources
 void deftable_destroy(DefinitionTable *table, Allocator *al);
 
-// Retrieves an entry using a StringView to avoid allocations
-DefinitionEntry *deftable_get(DefinitionTable *table, StringView name);
+// move ownership of definitions array to caller and release internal resources.
+Definition *deftable_claim(DefinitionTable *table, Allocator *al);
 
-// Inserts an entry. The table takes ownership of entry.name.
-// If an entry with the same name already exists, the OLD string is freed.
+DefinitionEntry *deftable_get(DefinitionTable *table, StringView name);
+Definition *deftable_get_def(DefinitionTable *table, StringView name);
+
 bool deftable_put(DefinitionTable *table, DefinitionEntry entry, Allocator *al);
 
-// Deletes an entry by name and frees the underlying String.
-// Requires the allocator.
-void deftable_delete(DefinitionTable *table, StringView name, Allocator *al);
+// void deftable_delete(DefinitionTable *table, StringView name, Allocator *al);
 
-// Iterator
+int deftable_register(DefinitionTable *table, Token *name_token, Definition def,
+                      Allocator *al);
+
 typedef struct {
   DefinitionEntry *entry;
 

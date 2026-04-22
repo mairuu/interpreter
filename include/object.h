@@ -120,13 +120,13 @@ typedef struct {
 typedef struct {
   ObjectString *name;
   int arity;
-} VariantArm;
+} VariantArm_;
 
 typedef struct {
   Object object;
   ObjectString *name;
   int arm_count;
-  VariantArm arms[];
+  VariantArm_ arms[];
 } ObjectVariantDefinition;
 
 typedef struct {
@@ -176,7 +176,7 @@ static inline bool value_is_obj_type(Value value, ObjectType type) {
 #define IS_VARIANT_DEFINITION(value)                                           \
   value_is_obj_type(value, OBJECT_VARIANT_DEFINITION)
 #define IS_VARIANT(value) value_is_obj_type(value, OBJECT_VARIANT)
-#define IS_ARRAY(value) value_is_obj_type(value, OBJECT_ARRAY)i
+#define IS_ARRAY(value) value_is_obj_type(value, OBJECT_ARRAY) i
 
 #define AS_STRING(value) ((ObjectString *)AS_OBJECT(value))
 #define AS_CSTRING(value) (((ObjectString *)AS_OBJECT(value))->chars)
