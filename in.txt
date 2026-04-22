@@ -1,173 +1,153 @@
-println("// === basic for-in ===")
-var arr = array()
-arr.push(1)
-arr.push(2)
-arr.push(3)
+fun ok(v)  { return Result.Ok(v) }
+fun err(m) { return Result.Err(m) }
 
-for x in arr {
-    println(x)
+// ── 1. basic unwrap ──────────────────────────────────────────────────────────
+fun test_basic() {
+    var r = ok(42)?
+    println(r) // 42
+    return ok(nil)
 }
-println("// expect: 1 2 3")
+test_basic()?
 
-println("// === for-in with var ===")
-for var x in arr {
-    println(x)
+// ── 2. chained unwrap ────────────────────────────────────────────────────────
+fun step_a() { return ok(10) }
+fun step_b() { return ok(step_a()? + 5) }
+fun step_c() { return ok(step_b()? * 2) }
+
+fun test_chain() {
+    var r = step_c()?
+    println(r) // 30
+    return ok(nil)
 }
-println("// expect: 1 2 3")
+test_chain()?
 
-println("// === nested for-in, inner shadows __iter ===")
-var a = array()
-a.push(10)
-a.push(20)
-var b = array()
-b.push(1)
-b.push(2)
+// ── 3. error bubbles through one level ───────────────────────────────────────
+fun will_fail() { return err("oops") }
 
-for x in a {
-    for y in b {
-        println(x + y)
+fun middle() {
+    var r = will_fail()?   // should bubble
+    println("never")
+    return ok(nil)
+}
+
+fun test_bubble() {
+    var r = middle()       // don't ?, catch it here
+    match r {
+        Result.Ok(v)   => { println("ok: " + str(v)) }
+        Result.Err(msg) => { println("caught: " + msg) } // caught: oops
     }
+    return ok(nil)
 }
-println("// expect: 11 12 21 22")
+test_bubble()?
 
-println("// === for-in, break ===")
-for x in arr {
-    if x == 2 { break }
-    println(x)
-}
-println("// expect: 1")
+// ── 4. error bubbles through multiple levels ─────────────────────────────────
+fun level_c() { return err("deep error") }
+fun level_b() { var _ = level_c()? return ok(nil) }
+fun level_a() { var _ = level_b()? return ok(nil) }
 
-println("// === for-in, continue ===")
-for x in arr {
-    if x == 2 { continue }
-    println(x)
-}
-println("// expect: 1 3")
-
-println("// === labeled break from inner loop ===")
-outer:
-for x in a {
-    for y in b {
-        if y == 2 { break outer }
-        println(x)
-        println(y)
+fun test_deep_bubble() {
+    var r = level_a()
+    match r {
+        Result.Ok(v)    => { println("ok") }
+        Result.Err(msg) => { println("caught: " + msg) } // caught: deep error
     }
+    return ok(nil)
 }
-println("// expect: 10 1")
+test_deep_bubble()?
 
-println("// === labeled continue on outer loop ===")
-outer:
-for x in arr {
-    for y in arr {
-        if y == 2 { continue outer }
-        println(x)
-        println(y)
+// ── 5. unwrap inside a loop ──────────────────────────────────────────────────
+fun safe_double(n) {
+    if n > 100 { return err("too big") }
+    return ok(n * 2)
+}
+
+fun test_loop() {
+    var i = 0
+    for i < 5 {
+        var r = safe_double(i)?
+        println(r)   // 0 2 4 6 8
+        i = i + 1
     }
+    return ok(nil)
 }
-println("// expect: 1 1  2 1  3 1")
+test_loop()?
 
-println("// === infinite for ===")
-var count = 0
-for {
-    count = count + 1
-    if count == 3 { break }
+// ── 6. loop aborts on error ──────────────────────────────────────────────────
+fun safe_inc(n) {
+    if n >= 5 { return err("too big") }
+    return ok(n + 1)
 }
-println(count)
-println("// expect: 3")
 
-println("// === for condition only ===")
-var i = 0
-for i < 3 {
-    i = i + 1
-}
-println(i)
-println("// expect: 3")
-
-println("// === for ; condition ; ===")
-for ; i < 6; {
-    i = i + 1
-}
-println(i)
-println("// expect: 6")
-
-println("// === for var init ; condition ; increment ===")
-for var j = 0; j < 3; j = j + 1 {
-    println(j)
-}
-println("// expect: 0 1 2")
-
-println("// === for init ; condition ; increment (no var) ===")
-var k = 0
-for k = 0; k < 3; k = k + 1 {
-    println(k)
-}
-println("// expect: 0 1 2")
-
-println("// === for-in over empty array ===")
-var empty = array()
-for x in empty {
-    println("should not print")
-}
-println("// expect: (nothing)")
-
-println("// === for-in, x is scoped ===")
-for x in arr {
-    // x visible here
-}
-// x not visible here — should be a compile error if referenced
-// println(x)
-
-println("// === labeled break, three levels deep ===")
-outermost:
-for x in arr {
-    middle:
-    for y in arr {
-        for z in arr {
-            if z == 2 { break middle }
-            println(z)
+fun test_loop_abort() {
+    var r = fun() {
+        var i = 0
+        for i < 10 {
+            var v = safe_inc(i)?
+            println(v)   // 1 2 3 4 5 then aborts
+            i = i + 1
         }
-        println("after inner") // should not print when z==2 breaks middle
+        return ok(nil)
+    }()
+    match r {
+        Result.Ok(v)    => { println("completed") }
+        Result.Err(msg) => { println("aborted: " + msg) }
     }
-    println(x)
+    return ok(nil)
 }
-println("// expect: 1  x  1  x  1  x   (z==2 breaks middle each time, outer continues)")
 
-struct Range { current end }
-
-impl Iterable for Range {
-    fun has_next(self) {
-        return self.current < self.end
+// ── 7. unwrap inside a closure ───────────────────────────────────────────────
+fun test_closure_bubble() {
+    var inner = fun() {
+        var r = err("from closure")?
+        println("never")
+        return ok(nil)
     }
-
-    fun next(self) {
-        var next = self.current
-        self.current = self.current + 1
-        return next
+    var r = inner()
+    match r {
+        Result.Ok(v)    => { println("ok") }
+        Result.Err(msg) => { println("caught: " + msg) } // caught: from closure
     }
+    return ok(nil)
 }
+test_closure_bubble()?
 
-println("// === for-in with Range (custom Iterable) ===")
-for x in Range(0, 3) {
-    println(x)
-}
-println("// expect: 0 1 2")
-
-println("// === for-in, mutation of x does not affect iterator ===")
-for x in arr {
-    x = x + 100
-    println(x)
-}
-println("// expect: 101 102 103")
-
-println("// === nested labeled, break correct level ===")
-outer:
-for x in arr {
-    inner:
-    for y in arr {
-        if x == 2 and y == 2 { break outer }
-        if y == 3 { break inner }
-        println(x)
-        println(y)
+// ── 8. upvalue still live after unwrap ───────────────────────────────────────
+fun test_upvalue() {
+    var x = 99
+    var inner = fun() {
+        var _ = ok(x)?   // captures x, unwraps fine
+        return ok(x + 1)
     }
+    var r = inner()?
+    println(r) // 100
+    return ok(nil)
 }
-println("// expect: 1 1  1 2  2 1")
+test_upvalue()?
+
+// ── 9. ? on non-Result should runtime error ──────────────────────────────────
+// (comment out if you want the suite to complete cleanly)
+// fun test_bad_unwrap() {
+//     var n = 42
+//     n?   // runtime error: expected a Result variant
+// }
+// test_bad_unwrap()
+
+// ── 10. returning Err from top level ─────────────────────────────────────────
+// this should print a runtime error message, not panic/crash
+// fun test_toplevel_err() {
+//     return err("top level bail")
+// }
+// test_toplevel_err()?
+
+// expected
+// 42
+// 30
+// caught: oops
+// caught: deep error
+// 0
+// 2
+// 4
+// 6
+// 8
+// caught: from closure
+// 100

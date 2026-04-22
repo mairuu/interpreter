@@ -57,6 +57,7 @@ typedef enum {
   OP_CAST_TRAIT,
   OP_CALL_METHOD,
 
+  OP_UNWRAP,
   OP_CALL,
   OP_RETURN,
 

@@ -171,6 +171,8 @@ int disassemble_chunk_instruction(Chunk *chunk, int offset) {
   case OP_LOOP:
     return jump_instruction("OP_LOOP", chunk, false, offset);
 
+  case OP_UNWRAP:
+    return simple_instruction("OP_UNWRAP", offset);
   case OP_CALL:
     return byte_instruction("OP_CALL", chunk, offset);
   case OP_RETURN:

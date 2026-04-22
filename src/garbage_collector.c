@@ -83,6 +83,7 @@ static void builtins_gc_visit(BuiltinRegistry *reg, GarbageCollector *gc) {
 
   gc_mark_object(gc, (Object *)reg->iterable);
   gc_mark_object(gc, (Object *)reg->into_iterable);
+  gc_mark_object(gc, (Object *)reg->result);
   gc_mark_object(gc, (Object *)reg->array);
 }
 

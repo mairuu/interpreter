@@ -10,6 +10,7 @@
 typedef enum {
   BUILTIN_ITERABLE = 0,
   BUILTIN_INTO_ITERABLE,
+  BUILTIN_RESULT,
   BUILTIN_ARRAY,
   BUILTIN_COUNT,
 } BuiltinBindTarget;
@@ -20,12 +21,16 @@ static const char *PRELUDE_ITERABLE =
     "trait IntoIterable { iter }\n"
     "__builtin_bind(__BUILTIN_INTO_ITERABLE, IntoIterable)\n"
     "fun iter(v) {"
-        "return match v {"
-            "Iterable(t) => t "
-            "IntoIterable(t) => t.iter() as Iterable "
-            "_ => panic(v, \"is not iterable\") "
-        "}"
+    " return match v {"
+    "   Iterable(t) => t "
+    "   IntoIterable(t) => t.iter() as Iterable "
+    "   _ => panic(v, \"is not iterable\") "
+    " }"
     "}\n";
+
+static const char *PRELUDE_RESULT =
+    "variant Result { Ok(v) Err(msg) }\n"
+    "__builtin_bind(__BUILTIN_RESULT, Result)\n";
 
 static const char *PRELUDE_ARRAY = "trait Array { push pop get set length }\n"
                                    "__builtin_bind(__BUILTIN_ARRAY, Array)\n";
@@ -37,6 +42,7 @@ typedef struct {
 
 static const PreludeEntry MANIFEST[] = {
     {"iterable.dt", NULL},
+    {"result.dt", NULL},
     {"array.dt", NULL},
 };
 
@@ -57,6 +63,13 @@ Value native_builtin_bind(VirtualMachine *vm, int arg_count, Value *args) {
           vm, "__builtin_bind: BUILTIN_ITERABLE expects a trait definition");
     }
     vm->builtins.iterable = AS_TRAIT_DEFINITION(args[1]);
+    break;
+  case BUILTIN_RESULT:
+    if (!IS_VARIANT_DEFINITION(args[1])) {
+      vm_runtime_error(
+          vm, "__builtin_bind: BUILTIN_RESULT expects a variant definition");
+    }
+    vm->builtins.result = AS_VARIANT_DEFINITION(args[1]);
     break;
   case BUILTIN_INTO_ITERABLE:
     if (!IS_TRAIT_DEFINITION(args[1])) {
@@ -93,13 +106,14 @@ bool bootstrap(VirtualMachine *vm) {
   } constants[] = {
       {"__BUILTIN_ITERABLE", (double)BUILTIN_ITERABLE},
       {"__BUILTIN_INTO_ITERABLE", (double)BUILTIN_INTO_ITERABLE},
+      {"__BUILTIN_RESULT", (double)BUILTIN_RESULT},
       {"__BUILTIN_ARRAY", (double)BUILTIN_ARRAY},
   };
   for (size_t i = 0; i < sizeof(constants) / sizeof(constants[0]); i++) {
     vm_define_global(vm, constants[i].name, NUMBER_VALUE(constants[i].value));
   }
 
-  const char *sources[] = {PRELUDE_ITERABLE, PRELUDE_ARRAY};
+  const char *sources[] = {PRELUDE_ITERABLE, PRELUDE_RESULT, PRELUDE_ARRAY};
   int count = (int)(sizeof(sources) / sizeof(sources[0]));
 
   for (int i = 0; i < count; i++) {
@@ -114,6 +128,16 @@ bool bootstrap(VirtualMachine *vm) {
   if (vm->builtins.iterable == NULL) {
     fprintf(stderr, "bootstrap: vm->builtins.iterable was not set — "
                     "did iterable.dt call __builtin_bind?\n");
+    return false;
+  }
+  if (vm->builtins.into_iterable == NULL) {
+    fprintf(stderr, "bootstrap: vm->builtins.into_iterable was not set — "
+                    "did iterable.dt call __builtin_bind?\n");
+    return false;
+  }
+  if (vm->builtins.result == NULL) {
+    fprintf(stderr, "bootstrap: vm->builtins.result was not set — "
+                    "did result.dt call __builtin_bind?\n");
     return false;
   }
   if (vm->builtins.array == NULL) {
@@ -136,8 +160,9 @@ bool bootstrap(VirtualMachine *vm) {
   }
 
   if (!implement_iterable_for_obj_array_iterator(vm)) {
-    fprintf(stderr,
-            "bootstrap: failed to implement Iterable for ObjectArrayIterator\n");
+    fprintf(
+        stderr,
+        "bootstrap: failed to implement Iterable for ObjectArrayIterator\n");
     return false;
   }
 

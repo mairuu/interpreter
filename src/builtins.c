@@ -222,6 +222,7 @@ void builtins_destroy(BuiltinRegistry *reg) {
 
   reg->iterable = NULL;
   reg->into_iterable = NULL;
+  reg->result = NULL;
   reg->array = NULL;
   reg->array_impl_obj_array = NULL;
 }

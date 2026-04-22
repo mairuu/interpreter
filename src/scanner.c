@@ -307,6 +307,8 @@ Token scanner_next_token(Scanner *s) {
     return token_create(s, match(s, '=') ? TOKEN_LESS_EQUAL : TOKEN_LESS);
   case '>':
     return token_create(s, match(s, '=') ? TOKEN_GREATER_EQUAL : TOKEN_GREATER);
+  case '?':
+    return token_create(s, TOKEN_QUESTION);
   case '"':
     return token_string(s);
   }

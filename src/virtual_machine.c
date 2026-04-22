@@ -530,7 +530,7 @@ static ObjectStructInstance *vm_extract_struct_instance(VirtualMachine *vm,
 }
 
 static ObjectImpl *vm_find_impl_for(VirtualMachine *vm, Value value,
-                                        ObjectTraitDefinition *trait) {
+                                    ObjectTraitDefinition *trait) {
   if (IS_TRAIT_OBJECT(value)) {
     ObjectTraitObject *trait_object = AS_TRAIT_OBJECT(value);
     if (trait_object->impl->trait == trait) {
@@ -1090,7 +1090,8 @@ static bool vm_run(VirtualMachine *vm) {
              "expected a trait definition constant");
       ObjectTraitDefinition *trait = AS_TRAIT_DEFINITION(vm_peek(vm, 0));
 
-      vm->stack.top[-1] = BOOL_VALUE(vm_find_impl_for(vm, subject, trait) != NULL);
+      vm->stack.top[-1] =
+          BOOL_VALUE(vm_find_impl_for(vm, subject, trait) != NULL);
 
       break;
     }
@@ -1383,12 +1384,42 @@ static bool vm_run(VirtualMachine *vm) {
       }
       break;
     }
+    case OP_UNWRAP: {
+      Value val = vm_peek(vm, 0);
+      if (!IS_VARIANT(val)) {
+        vm_runtime_error(vm, "expected a variant value to unwrap");
+        break;
+      }
+      ObjectVariant *variant = AS_VARIANT(val);
+      if (variant->def != vm->builtins.result) {
+        vm_runtime_error(vm, "expected a Result variant to unwrap");
+        break;
+      }
+      if (variant->tag == 0) {
+        vm->stack.top[-1] = variant->payload[0];
+      } else {
+        frame->ip = ip;
+        vm_close_upvalues(vm, frame->base);
+        vm->frame_count--;
+        if (vm->frame_count == 0) { // top-level unwrap
+          vm_runtime_error(vm, "unhandled error: %s",
+                           AS_STRING(variant->payload[0])->chars);
+          // no-return
+        }
+        vm->stack.top = frame->base;
+        vm_push(vm, val);
+        frame = &vm->frames[vm->frame_count - 1];
+        ip = frame->ip;
+      }
+      break;
+    }
     case OP_RETURN: {
       Value result = vm_pop(vm);
+      frame->ip = ip;
       vm_close_upvalues(vm, frame->base);
       vm->frame_count--;
       if (vm->frame_count == 0) {
-        vm_pop(vm);
+        vm_pop(vm); // script
         return true;
       }
       vm->stack.top = frame->base;

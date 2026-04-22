@@ -493,6 +493,7 @@ static void and_(CompilerContext *ctx, bool can_assign);
 static void or_(CompilerContext *ctx, bool can_assign);
 static void dot(CompilerContext *ctx, bool can_assign);
 static void as(CompilerContext *ctx, bool can_assign);
+static void question_mark(CompilerContext *ctx, bool can_assign);
 
 // expression
 static void if_(CompilerContext *ctx, bool can_assign);
@@ -511,6 +512,7 @@ ParseRule rules[] = {
     [TOKEN_MINUS_MINUS] = {NULL, NULL, PREC_NONE},
     [TOKEN_PLUS] = {NULL, binary, PREC_TERM},
     [TOKEN_PLUS_PLUS] = {NULL, NULL, PREC_NONE},
+    [TOKEN_QUESTION] = {NULL, question_mark, PREC_OR},
     [TOKEN_SEMICOLON] = {NULL, NULL, PREC_NONE},
     [TOKEN_SLASH] = {NULL, binary, PREC_FACTOR},
     [TOKEN_STAR] = {NULL, binary, PREC_FACTOR},
@@ -2299,6 +2301,11 @@ static void as(CompilerContext *ctx, bool can_assign) {
 
   expression(ctx);
   ctx_emit_byte(ctx, OP_CAST_TRAIT);
+}
+
+static void question_mark(CompilerContext *ctx, bool can_assign) {
+  (void)can_assign;
+  ctx_emit_byte(ctx, OP_UNWRAP);
 }
 
 static void if_(CompilerContext *ctx, bool can_assign) {
